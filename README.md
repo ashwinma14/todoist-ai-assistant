@@ -1,58 +1,65 @@
 # Todoist Processor
 
-A comprehensive task automation system that intelligently processes your Todoist tasks with smart URL handling, rule-based labeling, AI-powered categorization, and automatic section organization. Transform chaotic task lists into beautifully organized, actionable workflows.
+A powerful and intuitive task automation tool that transforms your Todoist task list into an organized, manageable workflow. It intelligently processes tasks by detecting and formatting URLs, applying smart labels based on customizable rules, leveraging AI to categorize tasks without clear matches, and automatically organizing tasks into appropriate sections. Whether you’re managing work projects, personal errands, or media links, this tool helps you save time and stay focused with minimal manual effort.
 
 ---
 
 ## 🔧 What It Does
 
 ### 🧠 Smart URL Processing
-- **Multi-URL Detection**: Processes multiple URLs in a single task
-- **Intelligent Title Fetching**: Converts URLs to `[Page Title](URL)` format
-- **Platform-Aware**: Special handling for Reddit, Instagram, YouTube, and 20+ domains
-- **Title Cleaning**: Removes noise and truncates overly long titles
-- **Domain Labels**: Automatic platform-specific labels (github, youtube, reddit, etc.)
+- **Multi-URL Detection**: Identifies and processes multiple URLs within a single task
+- **Intelligent Title Fetching**: Converts URLs into `[Page Title](URL)` markdown links for clarity
+- **Platform-Aware**: Specialized handling for Reddit, Instagram, YouTube, and 20+ popular domains
+- **Title Cleaning**: Removes unnecessary noise and truncates overly long titles for neatness
+- **Domain Labels**: Automatically adds platform-specific labels (e.g., github, youtube, reddit)
 
 ### 🏷️ Intelligent Auto-Labeling
 
-#### **Rule-Based Labeling** ⚡
-- **URL Detection**: Automatically tags link-containing tasks
-- **Content Matching**: Keywords, prefixes, and regex patterns
-- **Custom Rules**: Fully configurable via `rules.json`
-- **Label Creation**: Automatically creates missing labels when configured
-- **Universal Coverage**: Evaluates ALL tasks, not just those with URLs
+#### **Rule-Based Labeling** ⚡  
+Labeling now applies to **all tasks**, not just those containing links. This system uses flexible matchers to determine when to apply labels:
 
-#### **GPT Fallback Labeling** 🤖
-- **AI-Powered**: Uses OpenAI GPT for tasks that don't match any rules
-- **Context-Aware**: Understands task context and assigns relevant labels
-- **Configurable Prompts**: Customize GPT instructions for your workflow
-- **Hybrid Approach**: Rules first for speed, GPT for flexibility
+- **URL Matcher (`"match": "url"`)**: Detects tasks containing one or more URLs  
+- **Keyword Matcher (`"contains": [...]`)**: Matches tasks containing specified keywords  
+- **Prefix Matcher (`"prefix": "@"`)**: Matches tasks starting with a specific character or string (e.g., tasks beginning with `@` for mentions)  
+- **Regex Matcher (`"regex": "pattern"`)**: Matches tasks using regular expressions for advanced pattern matching  
 
-### 📂 Smart Section Router ✨
-- **Automatic Organization**: Moves tasks to appropriate sections within Inbox
-- **Rule-Based Routing**: Uses same `rules.json` configuration as labeling
-- **Dynamic Section Creation**: Creates sections when needed (configurable)
-- **Manual Control**: Fine-grained control over which sections get created
-- **Visual Organization**: Separates links, meetings, urgent tasks, etc.
+These matchers allow for precise and customizable labeling rules, ensuring your tasks are categorized exactly how you want.
 
-### 🧪 Advanced Testing & Debugging
-- `--dry-run`: Preview all changes without making modifications
-- `--test`: Isolated URL parsing testing
-- `--verbose`: Detailed step-by-step processing logs
-- **Mock Mode**: Test GPT integration without API calls
+#### **GPT-Powered Labeling (Fallback)** 🤖  
+When no rule-based match is found, the system can optionally use OpenAI GPT to suggest labels:  
 
-### ⚡ Performance & Efficiency
-- **Incremental Processing**: Only handles new tasks since last run
-- **Smart Skipping**: Avoids re-processing already labeled/organized tasks
-- **Timestamp Tracking**: Maintains state for optimal cron performance
-- **Rate Limiting Friendly**: GPT only called when necessary
+- **Triggered only if no rules match** to maintain speed and control  
+- **Default behavior assigns a single most relevant label**, but can be configured to assign multiple labels by adjusting the prompt  
+- **Context-aware**: Understands the task’s content to provide meaningful categorization  
+- **Customizable prompts** let you tailor AI behavior to your workflow  
 
-### 📊 Rich Output & Monitoring
-- **Colored CLI**: Enhanced interface with `rich` library support
-- **Comprehensive Logging**: Separate logs for rule-based vs GPT vs section actions
-- **Source Tracking**: Know whether labels came from rules, AI, or domain detection
-- **Section Tracking**: Monitor all task movements and section operations
-- **Detailed Summaries**: Clear breakdown of processed, labeled, moved, skipped, and failed tasks
+This hybrid approach combines the reliability of rules with the flexibility of AI.
+
+### 📂 Smart Section Router ✨  
+Tasks are automatically moved to appropriate sections **only if the matched label was actually applied**. For example:  
+
+- Tasks labeled as `link` are moved to the "Links" section (which is auto-created if configured)  
+- Sections like "Meetings," "Urgent," or "Follow-ups" are only triggered when the corresponding label has been successfully applied  
+- This ensures that section routing reflects the true categorization of tasks and avoids misplacement  
+
+---
+
+## 🏁 Getting Started
+
+**What is this tool?**  
+Todoist Processor is an automation assistant that helps you keep your Todoist Inbox neat and actionable by automatically labeling tasks, formatting URLs, and organizing tasks into sections based on your personalized rules and AI suggestions.
+
+**Who is it for?**  
+- Busy professionals juggling multiple projects  
+- Anyone overwhelmed by unorganized task lists  
+- Users who want smarter task categorization without manual tagging  
+- Teams looking to streamline task management  
+
+**Why use it?**  
+- Save time by automating repetitive task labeling and organization  
+- Gain clearer overviews with well-structured task lists  
+- Leverage AI to handle ambiguous tasks intelligently  
+- Maintain consistent workflows with customizable, rule-driven logic  
 
 ---
 
@@ -127,29 +134,29 @@ The system uses a sophisticated rule engine supporting labeling, section routing
 
 | Field | Purpose | Required | Description |
 |-------|---------|----------|-------------|
-| `match` | Content matcher | Yes* | Matches "url" for URL detection |
-| `contains` | Content matcher | Yes* | Array of keywords to match |
-| `prefix` | Content matcher | Yes* | String that task must start with |
-| `regex` | Content matcher | Yes* | Regular expression pattern |
-| `label` | Labeling | Yes | Label to apply when rule matches |
-| `move_to` | Section routing | No | Target section name for task |
-| `create_if_missing` | Auto-creation | No | Create label/section if missing |
+| `match` | Content matcher | Yes* | Matches `"url"` to detect tasks containing URLs |
+| `contains` | Content matcher | Yes* | Array of keywords to match within task content |
+| `prefix` | Content matcher | Yes* | String that the task must start with (e.g., `"@"` for mentions) |
+| `regex` | Content matcher | Yes* | Regular expression pattern for advanced matching |
+| `label` | Labeling | Yes | Label to apply when the rule matches |
+| `move_to` | Section routing | No | Target section name to move the task to |
+| `create_if_missing` | Auto-creation | No | Create label and/or section automatically if missing |
 
-*One matcher field required per rule
+*Each rule requires exactly one matcher field to define matching logic.
 
 ### Understanding `create_if_missing`
 
 This powerful field controls **both** label and section creation:
 
 #### **`create_if_missing: true`** (Fully Automated)
-- ✅ **Label missing** → Creates label automatically
-- ✅ **Section missing** → Creates section automatically  
-- ✅ **Always applies** labels and moves tasks
+- ✅ **Label missing** → Creates the label automatically  
+- ✅ **Section missing** → Creates the section automatically  
+- ✅ **Always applies** labels and moves tasks accordingly  
 
 #### **`create_if_missing: false`** (Manual Control)
-- ❌ **Label missing** → Rule doesn't apply
-- ❌ **Section missing** → Task doesn't get moved
-- ✅ **Both exist** → Applies label and moves task
+- ❌ **Label missing** → Rule does not apply to the task  
+- ❌ **Section missing** → Task is labeled but not moved  
+- ✅ **Both exist** → Label applied and task moved as configured  
 
 ### Smart Configuration Strategy
 
@@ -159,7 +166,7 @@ This powerful field controls **both** label and section creation:
   "match": "url",
   "label": "link", 
   "move_to": "Links",
-  "create_if_missing": true    // Always works
+  "create_if_missing": true    // Always works automatically
 }
 ```
 
@@ -169,15 +176,15 @@ This powerful field controls **both** label and section creation:
   "contains": ["meeting"],
   "label": "meeting",
   "move_to": "Meetings", 
-  "create_if_missing": false   // Only works if you create them
+  "create_if_missing": false   // Requires manual label and section creation
 }
 ```
 
 **Workflow:**
-1. Create labels in Todoist for categories you want (e.g., `meeting`, `urgent`)
-2. Create sections in Todoist for organization you want (e.g., `Meetings`, `Urgent`)
-3. System automatically applies labels and organizes matching tasks
-4. URLs work automatically regardless of manual setup
+1. Create labels in Todoist for categories you want (e.g., `meeting`, `urgent`)  
+2. Create sections in Todoist for organization you want (e.g., `Meetings`, `Urgent`)  
+3. The system automatically applies labels and organizes matching tasks  
+4. URLs work automatically regardless of manual setup  
 
 ---
 
@@ -250,11 +257,11 @@ GPT_MOCK_MODE=1                       # Use mock GPT responses for testing
 ```
 "Clean the garage and organize tools" 
 → Label: home (GPT-assigned)
-→ Section: None (GPT doesn't route to sections)
+→ Section: None (GPT fallback does not move tasks)
 
 "Review quarterly sales report by Friday" 
 → Labels: work, urgent (GPT-assigned)
-→ Section: None (GPT doesn't route to sections)
+→ Section: None (GPT fallback does not move tasks)
 ```
 
 ### Complete URL Processing
@@ -321,11 +328,11 @@ Section: Links (auto-created)
 ## 📁 Logging & Monitoring
 
 ### Task Logs (`task_log.txt`)
-- **Rule Matching**: Which rules triggered for each task
-- **GPT Interactions**: API calls, responses, and fallback actions
-- **Section Operations**: Task movements, section creation, routing decisions
-- **URL Processing**: Title fetching success/failure details
-- **Source Tracking**: Whether actions came from rules, GPT, or domain detection
+- **Rule Matching**: Which rules triggered for each task  
+- **GPT Interactions**: API calls, responses, and fallback actions  
+- **Section Operations**: Task movements, section creation, routing decisions  
+- **URL Processing**: Title fetching success/failure details  
+- **Source Tracking**: Whether actions came from rules, GPT, or domain detection  
 
 ### Enhanced Log Examples
 ```
@@ -356,9 +363,9 @@ Tailor the AI to your workflow by customizing the GPT configuration:
 ### Section Management Strategy
 
 #### **Option 1: Minimal Automation (Recommended)**
-- Only URLs auto-create sections
-- Manually create other sections you want
-- Maximum control, minimal clutter
+- Only URLs auto-create sections  
+- Manually create other sections you want  
+- Maximum control, minimal clutter  
 
 #### **Option 2: Full Automation**
 ```json
@@ -366,8 +373,8 @@ Tailor the AI to your workflow by customizing the GPT configuration:
   "create_if_missing": true  // For all rules
 }
 ```
-- All matching rules create sections
-- More automation, potential for clutter
+- All matching rules create sections  
+- More automation, potential for clutter  
 
 #### **Option 3: Mixed Approach**
 ```json
@@ -393,41 +400,41 @@ Perfect for cron jobs and CI/CD pipelines:
 ## 🔄 Processing Flow
 
 ### Complete Automation Pipeline
-1. **Fetch Tasks**: Get new/modified tasks from specified projects
-2. **Rule Evaluation**: Apply all rules from `rules.json` to each task
-3. **GPT Fallback**: For unmatched tasks, get AI label suggestions
-4. **Label Application**: Apply matched labels (create if configured)
-5. **Section Routing**: Move tasks to target sections (create if configured)
-6. **URL Processing**: Fetch titles and format as markdown links
-7. **Domain Labeling**: Add platform-specific labels for URLs
-8. **Logging**: Record all operations with source attribution
+1. **Fetch Tasks**: Get new or modified tasks from specified projects  
+2. **Rule Evaluation**: Apply all rules from `rules.json` to each task  
+3. **GPT Fallback**: For unmatched tasks, get AI label suggestions  
+4. **Label Application**: Apply matched labels (create if configured)  
+5. **Section Routing**: Move tasks to target sections (only if label applied and create if missing configured)  
+6. **URL Processing**: Fetch titles and format as markdown links  
+7. **Domain Labeling**: Add platform-specific labels for URLs  
+8. **Logging**: Record all operations with source attribution  
 
 ### Smart Decision Making
-- **Rules processed in order** → First match wins for section routing
-- **Multiple rules can match** → All matching labels applied
-- **GPT only triggers** → When no rules match
-- **Section routing only for rules** → GPT doesn't move tasks
-- **URL processing independent** → Always runs for links regardless of labeling
+- **Rules processed in order** → First match wins for section routing  
+- **Multiple rules can match** → All matching labels applied  
+- **GPT only triggers** → When no rules match  
+- **Section routing only for rules** → GPT fallback does not move tasks  
+- **URL processing independent** → Always runs for links regardless of labeling  
 
 ---
 
 ## ✅ Requirements
 
-- **Python 3.7+**
-- **Todoist account** with API access
-- **Internet connection** for URL title fetching
-- **OpenAI API key** (optional, for GPT features)
+- **Python 3.7+**  
+- **Todoist account** with API access  
+- **Internet connection** for URL title fetching  
+- **OpenAI API key** (optional, for GPT fallback features)  
 
 ---
 
 ## 🤝 Contributing
 
-We welcome contributions! Areas for enhancement:
-- Additional platform support for URL processing
-- More sophisticated rule matching patterns
-- Enhanced GPT prompt engineering
-- Advanced section organization strategies
-- Performance optimizations
+We welcome contributions! Areas for enhancement:  
+- Additional platform support for URL processing  
+- More sophisticated rule matching patterns  
+- Enhanced GPT prompt engineering  
+- Advanced section organization strategies  
+- Performance optimizations  
 
 ---
 
@@ -439,16 +446,15 @@ MIT License. See `LICENSE` for details.
 
 ## 🙏 Acknowledgments
 
-- Built with [Claude Code](https://claude.ai/code)
-- Powered by OpenAI GPT for intelligent labeling
-- Enhanced with the Todoist API ecosystem
+- Powered by OpenAI GPT for intelligent labeling  
+- Enhanced with the Todoist API ecosystem  
 
 ---
 
 ## 🆕 Version History
 
-- **v1.0**: Smart Link Cleaner with URL processing
-- **v1.1**: Rule-based labeling system
-- **v1.2**: GPT fallback labeling integration
-- **v1.3**: Universal task labeling (not just links)
+- **v1.0**: Smart Link Cleaner with URL processing  
+- **v1.1**: Rule-based labeling system  
+- **v1.2**: GPT fallback labeling integration  
+- **v1.3**: Universal task labeling (not just links)  
 - **v2.0**: Smart Section Router with automatic organization ✨
