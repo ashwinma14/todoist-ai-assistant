@@ -745,7 +745,8 @@ def main(test_mode=False):
 
     # Get last run timestamp for incremental processing
     last_run_time = None
-    if not args.full_scan and not test_mode:
+    force_full_scan = args.full_scan or os.getenv("FORCE_FULL_SCAN", "").lower() in ("true", "1", "yes")
+    if not force_full_scan and not test_mode:
         last_run_time = get_last_run_timestamp()
     
     # Log session start
@@ -756,7 +757,7 @@ def main(test_mode=False):
         mode_info.append("DRY_RUN")
     if args.verbose:
         mode_info.append("VERBOSE")
-    if args.full_scan:
+    if force_full_scan:
         mode_info.append("FULL_SCAN")
     elif last_run_time:
         mode_info.append("INCREMENTAL")
@@ -918,7 +919,7 @@ def main(test_mode=False):
                               reason="no URL found")
 
         # Save timestamp for next incremental run (only if not dry run and not test mode)
-        if not args.dry_run and not test_mode and not args.full_scan:
+        if not args.dry_run and not test_mode and not force_full_scan:
             save_last_run_timestamp()
             task_logger.info("Saved timestamp for next incremental run")
         
