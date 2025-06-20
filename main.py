@@ -344,7 +344,7 @@ def is_good_title(title):
         "twitter / x", "attention required", "just a moment",
         "loading", "please wait", "redirecting",
         "access denied", "forbidden", "not found",
-        "untitled", "no title"
+        "untitled", "no title", "blocked", "unavailable"
     ]
     
     # Check for bad patterns
@@ -421,6 +421,11 @@ def fetch_page_title(url):
     try:
         # Special handling for Reddit links: try JSON API first, then fallback to old-reddit HTML
         if "reddit.com" in url:
+            # Better User-Agent that looks like a real browser
+            reddit_headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+            }
+            
             m = re.match(r'https?://(?:www\.)?reddit\.com/r/([^/]+)/s/([^/?#]+)', url)
             if m:
                 subreddit, postid = m.groups()
@@ -432,32 +437,46 @@ def fetch_page_title(url):
                     subreddit = postid = None
 
             if subreddit and postid:
-                # 1) Try JSON API for title
+                # 1) Try JSON API for title with better headers
                 json_url = f"https://www.reddit.com/r/{subreddit}/comments/{postid}.json"
                 try:
-                    resp_json = requests.get(json_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+                    resp_json = requests.get(json_url, headers=reddit_headers, timeout=15)
                     resp_json.raise_for_status()
                     data = resp_json.json()
                     title = data[0]["data"]["children"][0]["data"].get("title")
-                    if title:
-                        lower_title = title.lower()
-                        if any(bad in lower_title for bad in ["page not found", "twitter / x", "attention required"]):
-                            return None
+                    if title and title.lower() not in ["blocked", "page not found"]:
                         return title.strip()
                 except Exception as e:
                     pass
-                # 2) Fallback to old Reddit HTML
-                html_url = f"https://old.reddit.com/r/{subreddit}/comments/{postid}"
-            else:
-                html_url = url.replace("www.reddit.com", "old.reddit.com")
-            resp = requests.get(html_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
-            soup = BeautifulSoup(resp.text, "html.parser")
-            if soup.title and soup.title.string:
-                title = soup.title.string.split(" : ")[0].strip()
-                lower_title = title.lower()
-                if any(bad in lower_title for bad in ["page not found", "twitter / x", "attention required"]):
-                    return None
-                return title
+                
+                # 2) Try old Reddit with better headers and session
+                try:
+                    session = requests.Session()
+                    session.headers.update(reddit_headers)
+                    html_url = f"https://old.reddit.com/r/{subreddit}/comments/{postid}"
+                    resp = session.get(html_url, timeout=15)
+                    soup = BeautifulSoup(resp.text, "html.parser")
+                    if soup.title and soup.title.string:
+                        title = soup.title.string.split(" : ")[0].strip()
+                        if title.lower() not in ["blocked", "page not found", "reddit"]:
+                            return title
+                except Exception as e:
+                    pass
+                
+                # 3) Last resort: try without www
+                try:
+                    no_www_url = url.replace("www.reddit.com", "reddit.com").replace("reddit.com", "old.reddit.com")
+                    resp = requests.get(no_www_url, headers=reddit_headers, timeout=15)
+                    soup = BeautifulSoup(resp.text, "html.parser")
+                    if soup.title and soup.title.string:
+                        title = soup.title.string.split(" : ")[0].strip()
+                        if title.lower() not in ["blocked", "page not found", "reddit"]:
+                            return title
+                except Exception as e:
+                    pass
+            
+            # If all else fails, return a generic Reddit title
+            return f"Reddit Post in r/{subreddit}" if subreddit else "Reddit Post"
 
         # Special handling for Instagram links
         if "instagram.com" in url:
