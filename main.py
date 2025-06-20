@@ -1155,34 +1155,33 @@ def main(test_mode=False):
             
             content = task['content']
             
-            # Apply rule-based labeling with GPT fallback
+            # Apply rule-based labeling with GPT fallback to ALL tasks
             rule_labels, applied_rules = apply_rules_to_task(task, rules, gpt_fallback, task_logger)
             
             # Check if task contains any links for URL processing
             has_any_link = re.search(r'https?://\S+', content)
             
+            # Collect domain labels from URLs (if any)
+            domain_labels = set()
             if has_any_link:
-                # Extract all URLs from the content
                 urls = extract_all_urls(content)
                 
                 if args.verbose:
                     url_count = len(urls)
                     log_info(f"🔗 Found {url_count} URL{'s' if url_count != 1 else ''} in task")
                 
-                # Collect domain labels from URLs (in addition to rule-based labels)
-                domain_labels = set()
                 for url_info in urls:
                     domain_label = get_domain_label(url_info['url'])
                     if domain_label:
                         domain_labels.add(domain_label)
-                
-                # Combine rule-based labels with domain labels
-                all_labels = set(rule_labels) | domain_labels
-                
-                # Add labels that don't already exist
+            
+            # Combine all labels (rule-based/GPT + domain-specific)
+            all_labels = set(rule_labels) | domain_labels
+            
+            # Apply labels if we have any
+            if all_labels:
                 existing_labels = task.get("labels", [])
-                labels_to_add = list(all_labels)
-                new_labels = [label for label in labels_to_add if label not in existing_labels]
+                new_labels = [label for label in all_labels if label not in existing_labels]
                 
                 # Handle label creation for rules that require it
                 for rule_info in applied_rules:
@@ -1198,33 +1197,46 @@ def main(test_mode=False):
                             if label in domain_labels and label != 'link':
                                 summary.labeled(label)  # Domain-specific label
                             else:
-                                summary.labeled()  # Rule-based or generic label
+                                summary.labeled()  # Rule-based or GPT label
                         
                         if args.verbose and not args.dry_run:
                             log_success(f"🏷️  Tagged task with labels: {new_labels}")
                         
                         # Log the labeling action
                         action = "LABELED_DRY_RUN" if args.dry_run else "LABELED"
-                        first_url = urls[0]['url'] if urls else None
+                        first_url = urls[0]['url'] if has_any_link and 'urls' in locals() else None
                         label_sources = [rule['source'] for rule in applied_rules if rule['label'] in new_labels]
                         log_task_action(task_logger, task['id'], task['content'], action, 
                                       labels=new_labels, url=first_url, source=','.join(set(label_sources)))
+                    else:
+                        log_task_action(task_logger, task['id'], task['content'], "FAILED",
+                                      error="Failed to apply labels")
+                else:
+                    # Labels matched but no new labels to add
+                    log_task_action(task_logger, task['id'], task['content'], "LABELS_MATCHED_NO_NEW",
+                                  reason="all matching labels already exist")
+            else:
+                # No labels to apply
+                log_task_action(task_logger, task['id'], task['content'], "NO_LABELS",
+                              reason="no rules matched and no GPT suggestions")
 
-                # Process multiple links and update content
+            # Separate URL processing for link formatting (independent of labeling)
+            if has_any_link:
+                # Process multiple links and update content with titles
                 if args.verbose:
                     log_info(f"🌐 Processing {len(urls)} URL{'s' if len(urls) != 1 else ''} for titles...")
                 
                 updated_content, content_labels = process_multiple_links(content, task_logger, task['id'])
                 
-                # Check if content was actually updated or if it already has valid titles
+                # Check if content was actually updated with new titles
                 if updated_content != content:
                     # Content was updated with new titles
                     success = update_task(task, None, None, content_labels, summary, args.dry_run, new_content=updated_content)
                     if success:
                         summary.updated()
                         
-                        # Count URLs that got titles (estimate based on content change)
-                        urls_with_titles = len(urls)  # If content changed, assume most URLs got titles
+                        # Count URLs that got titles
+                        urls_with_titles = len(urls)
                         
                         if not args.dry_run:
                             log_success(f"✅ Updated task with {urls_with_titles} titled link{'s' if urls_with_titles != 1 else ''}")
@@ -1261,43 +1273,6 @@ def main(test_mode=False):
                         first_url = urls[0]['url'] if urls else "multiple URLs"
                         log_task_action(task_logger, task['id'], task['content'], "SKIPPED",
                                       url=first_url, reason="no valid titles found")
-            else:
-                # Task has no URLs, but check if any non-URL rules apply
-                if rule_labels:
-                    existing_labels = task.get("labels", [])
-                    new_labels = [label for label in rule_labels if label not in existing_labels]
-                    
-                    # Handle label creation for rules that require it
-                    for rule_info in applied_rules:
-                        if rule_info.get('create_if_missing', False) and rule_info['label'] in new_labels:
-                            if not args.dry_run:
-                                create_label_if_missing(rule_info['label'], task_logger)
-                    
-                    if new_labels:
-                        success = update_task(task, None, None, new_labels, summary, args.dry_run)
-                        if success:
-                            for label in new_labels:
-                                summary.labeled()
-                            
-                            if args.verbose and not args.dry_run:
-                                log_success(f"🏷️  Tagged task with rule-based labels: {new_labels}")
-                            
-                            # Log the rule-based labeling action
-                            action = "RULE_LABELED_DRY_RUN" if args.dry_run else "RULE_LABELED"
-                            label_sources = [rule['source'] for rule in applied_rules if rule['label'] in new_labels]
-                            log_task_action(task_logger, task['id'], task['content'], action, 
-                                          labels=new_labels, source=','.join(set(label_sources)))
-                        else:
-                            log_task_action(task_logger, task['id'], task['content'], "FAILED",
-                                          error="Failed to apply rule-based labels")
-                    else:
-                        # Rules matched but no new labels to add
-                        log_task_action(task_logger, task['id'], task['content'], "RULES_MATCHED_NO_NEW_LABELS",
-                                      reason="all matching rule labels already exist")
-                else:
-                    # No rules matched (including no URLs)
-                    log_task_action(task_logger, task['id'], task['content'], "NO_ACTION",
-                                  reason="no rules matched")
 
         # Save timestamp for next incremental run (only if not dry run and not test mode)
         if not args.dry_run and not test_mode and not force_full_scan:
