@@ -9,11 +9,16 @@ import argparse
 import logging
 from datetime import datetime, timezone, timedelta
 import json
+# OpenAI import - fallback to requests if package has issues
+try:
+    from openai import OpenAI
+    OPENAI_AVAILABLE = True
+except Exception:
+    OPENAI_AVAILABLE = False
 
 # Try to import rich for colored output, fallback to regular print
 try:
     from rich.console import Console
-    from rich.text import Text
     console = Console()
     HAS_RICH = True
 except ImportError:
@@ -222,21 +227,35 @@ def should_process_task(task, last_run_time, task_logger=None):
 
 
 def load_rules(rules_file='rules.json'):
-    """Load labeling rules from JSON file"""
+    """Load labeling rules and GPT fallback config from JSON file"""
     try:
         with open(rules_file, 'r') as f:
-            rules = json.load(f)
-        log_info(f"📋 Loaded {len(rules)} labeling rules from {rules_file}")
-        return rules
+            config = json.load(f)
+        
+        # Handle both old format (array) and new format (object with rules and gpt_fallback)
+        if isinstance(config, list):
+            # Old format - just rules array
+            rules = config
+            gpt_fallback = None
+            log_info(f"📋 Loaded {len(rules)} labeling rules from {rules_file} (legacy format)")
+        else:
+            # New format - object with rules and gpt_fallback
+            rules = config.get('rules', [])
+            gpt_fallback = config.get('gpt_fallback')
+            log_info(f"📋 Loaded {len(rules)} labeling rules from {rules_file}")
+            if gpt_fallback and gpt_fallback.get('enabled'):
+                log_info(f"🤖 GPT fallback enabled using model: {gpt_fallback.get('model', 'gpt-4')}")
+        
+        return rules, gpt_fallback
     except FileNotFoundError:
         log_warning(f"Rules file {rules_file} not found - using URL-only labeling")
-        return [{"match": "url", "label": "link"}]  # Default rule
+        return [{"match": "url", "label": "link"}], None  # Default rule
     except json.JSONDecodeError as e:
         log_error(f"Invalid JSON in {rules_file}: {e}")
-        return [{"match": "url", "label": "link"}]  # Default rule
+        return [{"match": "url", "label": "link"}], None  # Default rule
     except Exception as e:
         log_error(f"Error loading rules: {e}")
-        return [{"match": "url", "label": "link"}]  # Default rule
+        return [{"match": "url", "label": "link"}], None  # Default rule
 
 
 def evaluate_rule(rule, task_content):
@@ -271,13 +290,14 @@ def evaluate_rule(rule, task_content):
     return False
 
 
-def apply_rules_to_task(task, rules, task_logger=None):
-    """Apply all matching rules to a task and return labels to add"""
+def apply_rules_to_task(task, rules, gpt_fallback=None, task_logger=None):
+    """Apply all matching rules to a task and return labels to add, with GPT fallback"""
     content = task['content']
     task_id = task['id']
     labels_to_add = []
     applied_rules = []
     
+    # First, try rule-based matching
     for i, rule in enumerate(rules):
         if evaluate_rule(rule, content):
             label = rule.get("label")
@@ -287,13 +307,31 @@ def apply_rules_to_task(task, rules, task_logger=None):
                     "rule_index": i,
                     "label": label,
                     "matcher": get_rule_matcher_type(rule),
-                    "create_if_missing": rule.get("create_if_missing", False)
+                    "create_if_missing": rule.get("create_if_missing", False),
+                    "source": "rule"
                 }
                 applied_rules.append(rule_info)
                 
                 if task_logger:
                     matcher_desc = get_rule_description(rule)
                     task_logger.info(f"Task {task_id} | RULE_MATCH: Rule {i} matched ({matcher_desc}) → #{label}")
+    
+    # If no rules matched and GPT fallback is enabled, try GPT
+    if not labels_to_add and gpt_fallback and gpt_fallback.get('enabled'):
+        gpt_labels = get_gpt_labels(content, gpt_fallback, task_logger, task_id)
+        if gpt_labels:
+            labels_to_add.extend(gpt_labels)
+            for label in gpt_labels:
+                rule_info = {
+                    "label": label,
+                    "matcher": "gpt",
+                    "create_if_missing": gpt_fallback.get("create_if_missing", False),
+                    "source": "gpt"
+                }
+                applied_rules.append(rule_info)
+                
+                if task_logger:
+                    task_logger.info(f"Task {task_id} | GPT_MATCH: GPT suggested label → #{label}")
     
     return labels_to_add, applied_rules
 
@@ -364,6 +402,113 @@ def create_label_if_missing(label_name, task_logger=None):
         return None
 
 
+def get_gpt_labels(content, gpt_config, task_logger=None, task_id=None):
+    """Get label suggestions from GPT for a task"""
+    try:
+        # Check for OpenAI API key
+        if not os.environ.get('OPENAI_API_KEY'):
+            if task_logger and task_id:
+                task_logger.warning(f"Task {task_id} | GPT_SKIP: OPENAI_API_KEY not set")
+            return []
+        
+        # Check for mock mode for testing
+        if os.environ.get('GPT_MOCK_MODE'):
+            mock_labels = _get_mock_gpt_labels(content)
+            if task_logger and task_id:
+                task_logger.info(f"Task {task_id} | GPT_MOCK: Mock response → {mock_labels}")
+            return mock_labels
+        
+        # Construct prompt
+        base_prompt = gpt_config.get('base_prompt', 'Assign a relevant label to this Todoist task.')
+        user_extension = gpt_config.get('user_prompt_extension', '')
+        
+        full_prompt = f"{base_prompt}\n\n{user_extension}\n\nTask: {content}\n\nRespond with only the label name(s), separated by commas if multiple. Do not include explanations."
+        
+        # Try OpenAI package first, fallback to direct requests
+        if OPENAI_AVAILABLE:
+            try:
+                client = OpenAI(api_key=os.environ.get('OPENAI_API_KEY'))
+                response = client.chat.completions.create(
+                    model=gpt_config.get('model', 'gpt-3.5-turbo'),
+                    messages=[{"role": "user", "content": full_prompt}],
+                    max_tokens=50,
+                    temperature=0.3
+                )
+                
+                if response.choices and response.choices[0].message.content:
+                    raw_response = response.choices[0].message.content.strip()
+                    labels = [label.strip().lower() for label in raw_response.split(',')]
+                    labels = [label for label in labels if label and len(label) > 0]
+                    
+                    if task_logger and task_id:
+                        task_logger.info(f"Task {task_id} | GPT_SUCCESS: Raw response: '{raw_response}' → Parsed labels: {labels}")
+                    
+                    return labels[:2]
+                    
+            except Exception as e:
+                if task_logger and task_id:
+                    task_logger.warning(f"Task {task_id} | GPT_PACKAGE_ERROR: {str(e)}, falling back to direct HTTP")
+        
+        # Fallback to direct HTTP requests
+        url = "https://api.openai.com/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {os.environ.get('OPENAI_API_KEY')}",
+            "Content-Type": "application/json"
+        }
+        data = {
+            "model": gpt_config.get('model', 'gpt-3.5-turbo'),
+            "messages": [{"role": "user", "content": full_prompt}],
+            "max_tokens": 50,
+            "temperature": 0.3
+        }
+        
+        response = requests.post(url, headers=headers, json=data, timeout=30)
+        
+        if response.status_code == 200:
+            result = response.json()
+            if result.get('choices') and result['choices'][0].get('message', {}).get('content'):
+                raw_response = result['choices'][0]['message']['content'].strip()
+                
+                # Parse comma-separated labels
+                labels = [label.strip().lower() for label in raw_response.split(',')]
+                labels = [label for label in labels if label and len(label) > 0]
+                
+                if task_logger and task_id:
+                    task_logger.info(f"Task {task_id} | GPT_HTTP_SUCCESS: Raw response: '{raw_response}' → Parsed labels: {labels}")
+                
+                return labels[:2]  # Limit to 2 labels max
+        else:
+            if task_logger and task_id:
+                task_logger.error(f"Task {task_id} | GPT_HTTP_ERROR: {response.status_code} - {response.text}")
+        
+        if task_logger and task_id:
+            task_logger.warning(f"Task {task_id} | GPT_EMPTY: No content in response")
+        return []
+        
+    except Exception as e:
+        if task_logger and task_id:
+            task_logger.error(f"Task {task_id} | GPT_ERROR: {str(e)}")
+        log_warning(f"GPT API error: {str(e)}")
+        return []
+
+
+def _get_mock_gpt_labels(content):
+    """Mock GPT responses for testing"""
+    content_lower = content.lower()
+    
+    # Simple heuristics for testing
+    if any(word in content_lower for word in ['clean', 'organize', 'garage', 'basement', 'house', 'room']):
+        return ['home']
+    elif any(word in content_lower for word in ['work', 'meeting', 'project', 'deadline']):
+        return ['work']
+    elif any(word in content_lower for word in ['doctor', 'appointment', 'pay', 'tax', 'bill']):
+        return ['admin']
+    elif any(word in content_lower for word in ['watch', 'read', 'video', 'article']):
+        return ['media']
+    else:
+        return ['personal']
+
+
 def log_task_action(task_logger, task_id, task_content, action, **kwargs):
     """Log task processing action with details"""
     # Truncate very long content for readability
@@ -391,6 +536,9 @@ def log_task_action(task_logger, task_id, task_content, action, **kwargs):
     
     if 'reason' in kwargs and kwargs['reason']:
         log_parts.append(f"Reason: {kwargs['reason']}")
+    
+    if 'source' in kwargs and kwargs['source']:
+        log_parts.append(f"Source: {kwargs['source']}")
     
     log_message = " | ".join(log_parts)
     task_logger.info(log_message)
@@ -642,7 +790,6 @@ def fetch_tasks(project_id):
 
 def fetch_page_title(url):
     # Fixed variable scope and Reddit blocking issues - v3
-    original_url = url
     url = resolve_redirect(url)  # Handle shortlink redirects (e.g. Reddit /s/)
     try:
         # Special handling for Reddit links: try JSON API first, then fallback to old-reddit HTML
@@ -850,8 +997,8 @@ def main(test_mode=False):
     summary = TaskSummary()
     task_logger = setup_task_logging()
     
-    # Load labeling rules
-    rules = load_rules()
+    # Load labeling rules and GPT fallback config
+    rules, gpt_fallback = load_rules()
     
     parser = argparse.ArgumentParser()
     parser.add_argument("--project", type=str, help="Comma-separated list of project names to process")
@@ -1008,8 +1155,8 @@ def main(test_mode=False):
             
             content = task['content']
             
-            # Apply rule-based labeling
-            rule_labels, applied_rules = apply_rules_to_task(task, rules, task_logger)
+            # Apply rule-based labeling with GPT fallback
+            rule_labels, applied_rules = apply_rules_to_task(task, rules, gpt_fallback, task_logger)
             
             # Check if task contains any links for URL processing
             has_any_link = re.search(r'https?://\S+', content)
@@ -1059,8 +1206,9 @@ def main(test_mode=False):
                         # Log the labeling action
                         action = "LABELED_DRY_RUN" if args.dry_run else "LABELED"
                         first_url = urls[0]['url'] if urls else None
+                        label_sources = [rule['source'] for rule in applied_rules if rule['label'] in new_labels]
                         log_task_action(task_logger, task['id'], task['content'], action, 
-                                      labels=new_labels, url=first_url)
+                                      labels=new_labels, url=first_url, source=','.join(set(label_sources)))
 
                 # Process multiple links and update content
                 if args.verbose:
@@ -1136,8 +1284,9 @@ def main(test_mode=False):
                             
                             # Log the rule-based labeling action
                             action = "RULE_LABELED_DRY_RUN" if args.dry_run else "RULE_LABELED"
+                            label_sources = [rule['source'] for rule in applied_rules if rule['label'] in new_labels]
                             log_task_action(task_logger, task['id'], task['content'], action, 
-                                          labels=new_labels)
+                                          labels=new_labels, source=','.join(set(label_sources)))
                         else:
                             log_task_action(task_logger, task['id'], task['content'], "FAILED",
                                           error="Failed to apply rule-based labels")
