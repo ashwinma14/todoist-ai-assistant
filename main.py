@@ -599,35 +599,31 @@ def fetch_page_title(url):
         if og and og.get("content"):
             title = og["content"].strip()
             if is_good_title(title):
-                cleaned_title = clean_title(title)
-                return cleaned_title
+                return clean_title(title)
         
         # Try HTML title
         if soup.title and soup.title.string:
             title = soup.title.string.strip()
             if is_good_title(title):
-                cleaned_title = clean_title(title)
-                return cleaned_title
+                return clean_title(title)
         
         # Try Twitter card title
         twitter_title = soup.find("meta", attrs={"name": "twitter:title"})
         if twitter_title and twitter_title.get("content"):
             title = twitter_title["content"].strip()
             if is_good_title(title):
-                cleaned_title = clean_title(title)
-                return cleaned_title
+                return clean_title(title)
 
     except Exception as e:
-        # Only log unexpected errors, not common blocking issues
+        # Log all errors for debugging the clean_title issue
         from urllib.parse import urlparse
         try:
             domain = urlparse(url).netloc
-            error_str = str(e).lower()
-            # Don't spam logs with common blocking errors
-            if not any(x in error_str for x in ['blocked', 'forbidden', '403', '401', 'timeout', 'connection']):
-                log_warning(f"Unexpected error fetching title for {domain}: {str(e)}")
+            error_str = str(e)
+            # Always log for now to debug the issue
+            log_warning(f"Title fetch failed for {domain}: {error_str}")
         except:
-            pass
+            log_warning(f"Title fetch failed for unknown URL: {str(e)}")
     return None
 
 
