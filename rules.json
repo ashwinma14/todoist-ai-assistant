@@ -15,11 +15,6 @@
       "create_if_missing": true
     },
     {
-      "prefix": "@",
-      "label": "person",
-      "create_if_missing": true
-    },
-    {
       "contains": ["meeting", "call", "zoom", "teams"],
       "label": "meeting",
       "create_if_missing": true
