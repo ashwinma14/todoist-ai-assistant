@@ -376,8 +376,14 @@ def process_multiple_links(content, task_logger=None, task_id=None):
             
             if task_logger and task_id:
                 title_preview = title[:60] + "..." if len(title) > 60 else title
-                task_logger.info(f"Task {task_id} | Replaced '{original_text[:50]}...' with titled link: {title_preview}")
+                task_logger.info(f"Task {task_id} | SUCCESS: Replaced '{original_text[:50]}...' with titled link: {title_preview}")
         else:
+            # Log the failed URL for debugging
+            if task_logger and task_id:
+                from urllib.parse import urlparse
+                domain = urlparse(url).netloc
+                task_logger.info(f"Task {task_id} | FAILED: No title found for {domain} - {url[:100]}")
+            
             # If no title found, convert plain URL to markdown link with domain as title
             if url_info['type'] == 'plain':
                 try:
@@ -389,7 +395,7 @@ def process_multiple_links(content, task_logger=None, task_id=None):
                     updated_content = updated_content.replace(original_text, fallback_link)
                     
                     if task_logger and task_id:
-                        task_logger.info(f"Task {task_id} | No title found, used domain fallback: {domain}")
+                        task_logger.info(f"Task {task_id} | FALLBACK: Used domain fallback: {domain}")
                 except Exception:
                     pass
         
@@ -522,6 +528,8 @@ def fetch_page_title(url):
                         clean_title = title.strip()
                         return f"{clean_title} (r/{subreddit})"
                 except Exception as e:
+                    # Log Reddit JSON API failures for debugging
+                    print(f"DEBUG: Reddit JSON API failed for {url}: {str(e)}")
                     pass
                 
                 # 2) Try old Reddit with better headers and session
@@ -633,6 +641,13 @@ def fetch_page_title(url):
                 return clean_title(title)
 
     except Exception as e:
+        # Log general title fetch failures for debugging
+        from urllib.parse import urlparse
+        try:
+            domain = urlparse(url).netloc
+            print(f"DEBUG: Title fetch failed for {domain}: {str(e)}")
+        except:
+            print(f"DEBUG: Title fetch failed for {url[:50]}...: {str(e)}")
         pass
     return None
 
