@@ -177,6 +177,13 @@ def log_task_action(task_logger, task_id, task_content, action, **kwargs):
     task_logger.info(log_message)
 
 TODOIST_API = "https://api.todoist.com/rest/v2"
+
+# Check if API token is available
+if not os.environ.get('TODOIST_API_TOKEN'):
+    print("❌ TODOIST_API_TOKEN environment variable is not set!")
+    print("Please set your Todoist API token in your environment variables.")
+    exit(1)
+
 HEADERS = {"Authorization": f"Bearer {os.environ['TODOIST_API_TOKEN']}",
            "Content-Type": "application/json"}
 
@@ -611,7 +618,23 @@ def main(test_mode=False):
     else:
         project_names = ["inbox"]
     
-    all_projects = requests.get(f"{TODOIST_API}/projects", headers=HEADERS).json()
+    try:
+        projects_response = requests.get(f"{TODOIST_API}/projects", headers=HEADERS)
+        projects_response.raise_for_status()
+        all_projects = projects_response.json()
+    except requests.exceptions.JSONDecodeError:
+        log_error("❌ Failed to parse Todoist API response. Check your TODOIST_API_TOKEN.")
+        task_logger.error("API Error: Invalid JSON response from Todoist API - likely invalid token")
+        return
+    except requests.exceptions.HTTPError as e:
+        log_error(f"❌ Todoist API HTTP error: {e}")
+        task_logger.error(f"API Error: HTTP {projects_response.status_code} - {e}")
+        return
+    except Exception as e:
+        log_error(f"❌ Failed to fetch projects: {e}")
+        task_logger.error(f"API Error: {e}")
+        return
+    
     project_ids = [p["id"] for p in all_projects if p["name"].strip().lower() in project_names]
     if not project_ids:
         log_warning("No matching projects found")
