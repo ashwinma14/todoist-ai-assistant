@@ -370,9 +370,7 @@ def process_multiple_links(content, task_logger=None, task_id=None):
             task_logger.info(f"Task {task_id} | Processing URL: {url}")
         
         # Fetch title for this URL
-        print(f"PROCESS: Processing URL {url} for task {task_id}")
         title = fetch_page_title(url)
-        print(f"RESULT: Got title '{title}' for {url}")
         
         if title:
             # Create markdown link with title
@@ -384,7 +382,6 @@ def process_multiple_links(content, task_logger=None, task_id=None):
                 task_logger.info(f"Task {task_id} | SUCCESS: Replaced '{original_text[:50]}...' with titled link: {title_preview}")
         else:
             # Log the failed URL for debugging
-            print(f"ERROR: No title found for {url}")
             if task_logger and task_id:
                 from urllib.parse import urlparse
                 domain = urlparse(url).netloc
@@ -502,7 +499,6 @@ def fetch_tasks(project_id):
 
 def fetch_page_title(url):
     # Fixed variable scope and Reddit blocking issues - v3
-    print(f"FETCH: Attempting to fetch title for {url}")
     original_url = url
     url = resolve_redirect(url)  # Handle shortlink redirects (e.g. Reddit /s/)
     try:
@@ -619,15 +615,16 @@ def fetch_page_title(url):
                 return clean_title(title)
 
     except Exception as e:
-        # Log all errors for debugging the clean_title issue
+        # Only log unexpected errors, not common blocking issues
         from urllib.parse import urlparse
         try:
             domain = urlparse(url).netloc
-            error_str = str(e)
-            # Always log for now to debug the issue
-            log_warning(f"Title fetch failed for {domain}: {error_str}")
+            error_str = str(e).lower()
+            # Don't spam logs with common blocking errors
+            if not any(x in error_str for x in ['blocked', 'forbidden', '403', '401', 'timeout', 'connection', 'ssl']):
+                log_warning(f"Unexpected error fetching title for {domain}: {str(e)}")
         except:
-            log_warning(f"Title fetch failed for unknown URL: {str(e)}")
+            pass
     return None
 
 
@@ -914,19 +911,24 @@ def main(test_mode=False):
                 
                 updated_content, content_labels = process_multiple_links(content, task_logger, task['id'])
                 
-                # Check if content was actually updated
+                # Check if content was actually updated or if it already has valid titles
                 if updated_content != content:
+                    # Content was updated with new titles
                     success = update_task(task, None, None, content_labels, summary, args.dry_run, new_content=updated_content)
                     if success:
                         summary.updated()
                         
-                        # Count unique titles for display
-                        title_count = len([u for u in urls if fetch_page_title(u['url'])])
+                        # Count URLs that got titles
+                        urls_with_titles = 0
+                        for url_info in urls:
+                            title = fetch_page_title(url_info['url'])
+                            if title:
+                                urls_with_titles += 1
                         
                         if not args.dry_run:
-                            log_success(f"✅ Updated task with {title_count} titled link{'s' if title_count != 1 else ''}")
+                            log_success(f"✅ Updated task with {urls_with_titles} titled link{'s' if urls_with_titles != 1 else ''}")
                         else:
-                            log_info(f"📋 Would update task with {title_count} titled link{'s' if title_count != 1 else ''}", "cyan")
+                            log_info(f"📋 Would update task with {urls_with_titles} titled link{'s' if urls_with_titles != 1 else ''}", "cyan")
                         
                         # Log the update action
                         action = "MULTI_LINK_UPDATE_DRY_RUN" if args.dry_run else "MULTI_LINK_UPDATE"
@@ -938,15 +940,26 @@ def main(test_mode=False):
                         log_task_action(task_logger, task['id'], task['content'], "FAILED",
                                       error="API error during multi-link update")
                 else:
-                    # No titles could be fetched
-                    summary.skipped("no valid titles")
-                    if args.verbose:
-                        log_warning(f"⚠️  Skipped: Could not fetch valid titles for any URLs")
-                    
-                    # Log skipped task
-                    first_url = urls[0]['url'] if urls else "multiple URLs"
-                    log_task_action(task_logger, task['id'], task['content'], "SKIPPED",
-                                  url=first_url, reason="no valid titles found")
+                    # Content didn't change - check if it already has valid titles
+                    existing_markdown_links = len([u for u in urls if u['type'] == 'markdown'])
+                    if existing_markdown_links > 0:
+                        # Task already has properly formatted markdown links
+                        summary.skipped("already has titled links")
+                        if args.verbose:
+                            log_info(f"✅ Task already has {existing_markdown_links} properly titled link{'s' if existing_markdown_links != 1 else ''}")
+                        
+                        log_task_action(task_logger, task['id'], task['content'], "ALREADY_TITLED",
+                                      reason=f"already has {existing_markdown_links} markdown links")
+                    else:
+                        # No titles could be fetched for plain URLs
+                        summary.skipped("no valid titles")
+                        if args.verbose:
+                            log_warning(f"⚠️  Skipped: Could not fetch valid titles for any URLs")
+                        
+                        # Log skipped task
+                        first_url = urls[0]['url'] if urls else "multiple URLs"
+                        log_task_action(task_logger, task['id'], task['content'], "SKIPPED",
+                                      url=first_url, reason="no valid titles found")
             else:
                 # Log tasks without URLs (no action taken)
                 log_task_action(task_logger, task['id'], task['content'], "NO_ACTION",
