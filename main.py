@@ -370,7 +370,9 @@ def process_multiple_links(content, task_logger=None, task_id=None):
             task_logger.info(f"Task {task_id} | Processing URL: {url}")
         
         # Fetch title for this URL
+        print(f"PROCESS: Processing URL {url} for task {task_id}")
         title = fetch_page_title(url)
+        print(f"RESULT: Got title '{title}' for {url}")
         
         if title:
             # Create markdown link with title
@@ -382,6 +384,7 @@ def process_multiple_links(content, task_logger=None, task_id=None):
                 task_logger.info(f"Task {task_id} | SUCCESS: Replaced '{original_text[:50]}...' with titled link: {title_preview}")
         else:
             # Log the failed URL for debugging
+            print(f"ERROR: No title found for {url}")
             if task_logger and task_id:
                 from urllib.parse import urlparse
                 domain = urlparse(url).netloc
@@ -498,7 +501,8 @@ def fetch_tasks(project_id):
 
 
 def fetch_page_title(url):
-    # Fixed variable scope and Reddit blocking issues - v2
+    # Fixed variable scope and Reddit blocking issues - v3
+    print(f"FETCH: Attempting to fetch title for {url}")
     original_url = url
     url = resolve_redirect(url)  # Handle shortlink redirects (e.g. Reddit /s/)
     try:
