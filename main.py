@@ -519,23 +519,10 @@ def fetch_page_title(url):
                     subreddit = postid = None
 
             if subreddit and postid:
-                # 1) Try JSON API for title with better headers
-                json_url = f"https://www.reddit.com/r/{subreddit}/comments/{postid}.json"
-                try:
-                    resp_json = requests.get(json_url, headers=reddit_headers, timeout=15)
-                    resp_json.raise_for_status()
-                    data = resp_json.json()
-                    title = data[0]["data"]["children"][0]["data"].get("title")
-                    if title and title.lower() not in ["blocked", "page not found"]:
-                        # Success! Add subreddit context to title
-                        clean_title = title.strip()
-                        return f"{clean_title} (r/{subreddit})"
-                except Exception as e:
-                    # Log Reddit JSON API failures for debugging
-                    log_warning(f"Reddit JSON API failed for {url}: {str(e)}")
-                    pass
+                # Skip JSON API since Reddit is blocking it completely
+                # Go straight to HTML scraping approaches
                 
-                # 2) Try old Reddit with better headers and session
+                # 1) Try old Reddit with better headers and session
                 try:
                     session = requests.Session()
                     session.headers.update(reddit_headers)
@@ -550,24 +537,7 @@ def fetch_page_title(url):
                 except Exception as e:
                     pass
                 
-                # 3) Try alternative Reddit JSON endpoints
-                try:
-                    # Try the direct post JSON endpoint
-                    alt_json_url = f"https://www.reddit.com/r/{subreddit}/comments/{postid}/.json"
-                    resp_json = requests.get(alt_json_url, headers=reddit_headers, timeout=15)
-                    resp_json.raise_for_status()
-                    data = resp_json.json()
-                    if data and len(data) > 0 and 'data' in data[0]:
-                        children = data[0]['data'].get('children', [])
-                        if children and len(children) > 0:
-                            post_data = children[0].get('data', {})
-                            title = post_data.get('title', '')
-                            if title and title.lower() not in ["blocked", "page not found"]:
-                                return f"{title.strip()} (r/{subreddit})"
-                except Exception as e:
-                    pass
-                
-                # 4) Last resort: try without www
+                # 2) Try alternative old reddit approach without www
                 try:
                     no_www_url = url.replace("www.reddit.com", "reddit.com").replace("reddit.com", "old.reddit.com")
                     resp = requests.get(no_www_url, headers=reddit_headers, timeout=15)
@@ -628,30 +598,35 @@ def fetch_page_title(url):
         if og and og.get("content"):
             title = og["content"].strip()
             if is_good_title(title):
-                return clean_title(title)
+                cleaned_title = clean_title(title)
+                return cleaned_title
         
         # Try HTML title
         if soup.title and soup.title.string:
             title = soup.title.string.strip()
             if is_good_title(title):
-                return clean_title(title)
+                cleaned_title = clean_title(title)
+                return cleaned_title
         
         # Try Twitter card title
         twitter_title = soup.find("meta", attrs={"name": "twitter:title"})
         if twitter_title and twitter_title.get("content"):
             title = twitter_title["content"].strip()
             if is_good_title(title):
-                return clean_title(title)
+                cleaned_title = clean_title(title)
+                return cleaned_title
 
     except Exception as e:
-        # Log general title fetch failures for debugging
+        # Only log unexpected errors, not common blocking issues
         from urllib.parse import urlparse
         try:
             domain = urlparse(url).netloc
-            log_warning(f"Title fetch failed for {domain}: {str(e)}")
+            error_str = str(e).lower()
+            # Don't spam logs with common blocking errors
+            if not any(x in error_str for x in ['blocked', 'forbidden', '403', '401', 'timeout', 'connection']):
+                log_warning(f"Unexpected error fetching title for {domain}: {str(e)}")
         except:
-            log_warning(f"Title fetch failed for {url[:50]}...: {str(e)}")
-        pass
+            pass
     return None
 
 
