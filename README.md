@@ -1,4 +1,4 @@
-# Todoist Processor
+# Todoist AI Assistant
 
 A powerful and intuitive task automation tool that transforms your [Todoist](https://todoist.com) task list into an organized, manageable workflow. It intelligently processes tasks by detecting and formatting URLs, applying smart labels based on customizable rules, leveraging AI to categorize tasks without clear matches, and automatically organizing tasks into appropriate sections. Whether you’re managing work projects, personal errands, or media links, this tool helps you save time and stay focused with minimal manual effort.
 
@@ -47,7 +47,7 @@ Tasks are automatically moved to appropriate sections **only if the matched labe
 ## 🏁 Getting Started
 
 **What is this tool?**  
-Todoist Processor is an automation assistant that helps you keep your Todoist Inbox neat and actionable by automatically labeling tasks, formatting URLs, and organizing tasks into sections based on your personalized rules and AI suggestions.
+Todoist AI Assistant is an automation assistant that helps you keep your Todoist Inbox neat and actionable by automatically labeling tasks, formatting URLs, and organizing tasks into sections based on your personalized rules and AI suggestions.
 
 **Who is it for?**  
 - Busy professionals juggling multiple projects  
@@ -66,8 +66,8 @@ Todoist Processor is an automation assistant that helps you keep your Todoist In
 ## 🚀 Installation
 
 ```bash
-git clone https://github.com/ashwinma14/todoist-processor.git
-cd todoist-processor
+git clone https://github.com/ashwinma14/todoist-ai-assistant.git
+cd todoist-ai-assistant
 pip install -r requirements.txt
 
 # Set up environment variables
