@@ -518,7 +518,9 @@ def fetch_page_title(url):
                     data = resp_json.json()
                     title = data[0]["data"]["children"][0]["data"].get("title")
                     if title and title.lower() not in ["blocked", "page not found"]:
-                        return title.strip()
+                        # Success! Add subreddit context to title
+                        clean_title = title.strip()
+                        return f"{clean_title} (r/{subreddit})"
                 except Exception as e:
                     pass
                 
@@ -532,11 +534,29 @@ def fetch_page_title(url):
                     if soup.title and soup.title.string:
                         title = soup.title.string.split(" : ")[0].strip()
                         if title.lower() not in ["blocked", "page not found", "reddit"]:
-                            return title
+                            # Success! Add subreddit context to title
+                            return f"{title} (r/{subreddit})"
                 except Exception as e:
                     pass
                 
-                # 3) Last resort: try without www
+                # 3) Try alternative Reddit JSON endpoints
+                try:
+                    # Try the direct post JSON endpoint
+                    alt_json_url = f"https://www.reddit.com/r/{subreddit}/comments/{postid}/.json"
+                    resp_json = requests.get(alt_json_url, headers=reddit_headers, timeout=15)
+                    resp_json.raise_for_status()
+                    data = resp_json.json()
+                    if data and len(data) > 0 and 'data' in data[0]:
+                        children = data[0]['data'].get('children', [])
+                        if children and len(children) > 0:
+                            post_data = children[0].get('data', {})
+                            title = post_data.get('title', '')
+                            if title and title.lower() not in ["blocked", "page not found"]:
+                                return f"{title.strip()} (r/{subreddit})"
+                except Exception as e:
+                    pass
+                
+                # 4) Last resort: try without www
                 try:
                     no_www_url = url.replace("www.reddit.com", "reddit.com").replace("reddit.com", "old.reddit.com")
                     resp = requests.get(no_www_url, headers=reddit_headers, timeout=15)
@@ -544,7 +564,7 @@ def fetch_page_title(url):
                     if soup.title and soup.title.string:
                         title = soup.title.string.split(" : ")[0].strip()
                         if title.lower() not in ["blocked", "page not found", "reddit"]:
-                            return title
+                            return f"{title} (r/{subreddit})"
                 except Exception as e:
                     pass
             
