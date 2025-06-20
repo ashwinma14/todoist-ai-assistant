@@ -498,6 +498,7 @@ def fetch_tasks(project_id):
 
 
 def fetch_page_title(url):
+    # Fixed variable scope and Reddit blocking issues - v2
     original_url = url
     url = resolve_redirect(url)  # Handle shortlink redirects (e.g. Reddit /s/)
     try:
