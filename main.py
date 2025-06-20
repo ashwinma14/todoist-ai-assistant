@@ -184,7 +184,7 @@ if not os.environ.get('TODOIST_API_TOKEN'):
     print("Please set your Todoist API token in your environment variables.")
     exit(1)
 
-HEADERS = {"Authorization": f"Bearer {os.environ['TODOIST_API_TOKEN']}",
+HEADERS = {"Authorization": f"Bearer {os.environ['TODOIST_API_TOKEN'].strip()}",
            "Content-Type": "application/json"}
 
 # Domain-to-label mapping for platform-specific tagging
@@ -665,6 +665,9 @@ def main(test_mode=False):
     masked_token = f"{token[:8]}...{token[-4:]}" if len(token) > 12 else "TOKEN_TOO_SHORT"
     task_logger.info(f"=== SESSION START {mode_str} ===")
     task_logger.info(f"Using API token: {masked_token}")
+    task_logger.info(f"Token length: {len(token)}")
+    task_logger.info(f"Token has whitespace: {token != token.strip()}")
+    task_logger.info(f"Authorization header: Bearer {token[:8]}...{token[-4:] if len(token) > 12 else 'SHORT'}")
 
     if test_mode:
         log_info("🧪 Running in test mode...")
