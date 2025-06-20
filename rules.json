@@ -2,49 +2,57 @@
   "rules": [
     {
       "match": "url",
-      "label": "link"
+      "label": "link",
+      "move_to": "Links",
+      "create_if_missing": true
     },
     {
       "contains": ["follow up", "email", "reach out", "contact"],
       "label": "followup",
-      "create_if_missing": true
+      "move_to": "Follow-ups",
+      "create_if_missing": false
     },
     {
       "prefix": "!",
       "label": "urgent",
-      "create_if_missing": true
+      "move_to": "Urgent",
+      "create_if_missing": false
     },
     {
       "contains": ["meeting", "call", "zoom", "teams"],
       "label": "meeting",
-      "create_if_missing": true
+      "move_to": "Meetings",
+      "create_if_missing": false
     },
     {
       "contains": ["buy", "purchase", "order", "shopping"],
       "label": "shopping",
-      "create_if_missing": true
+      "move_to": "Shopping",
+      "create_if_missing": false
     },
     {
       "contains": ["read", "article", "book", "blog"],
       "label": "reading",
-      "create_if_missing": true
+      "move_to": "Reading",
+      "create_if_missing": false
     },
     {
       "regex": "\\b(bug|fix|issue|error)\\b",
       "label": "bug",
-      "create_if_missing": true
+      "move_to": "Issues",
+      "create_if_missing": false
     },
     {
       "contains": ["idea", "brainstorm", "concept"],
       "label": "idea",
-      "create_if_missing": true
+      "move_to": "Ideas",
+      "create_if_missing": false
     }
   ],
   "gpt_fallback": {
     "enabled": true,
     "model": "gpt-3.5-turbo",
     "base_prompt": "You are a productivity assistant. Assign the most relevant label to this Todoist task using one or two from this list: ['work', 'personal', 'admin', 'media', 'urgent', 'followup', 'home']",
-    "user_prompt_extension": "If it's a household chore, prefer 'home'.",
-    "create_if_missing": false
+    "user_prompt_extension": "If it's a household chore, prefer 'home'."
   }
 }

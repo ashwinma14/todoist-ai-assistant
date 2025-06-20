@@ -308,6 +308,7 @@ def apply_rules_to_task(task, rules, gpt_fallback=None, task_logger=None):
                     "label": label,
                     "matcher": get_rule_matcher_type(rule),
                     "create_if_missing": rule.get("create_if_missing", False),
+                    "move_to": rule.get("move_to"),
                     "source": "rule"
                 }
                 applied_rules.append(rule_info)
@@ -509,6 +510,82 @@ def _get_mock_gpt_labels(content):
         return ['personal']
 
 
+def get_project_sections(project_id, task_logger=None):
+    """Get all sections for a project"""
+    try:
+        response = requests.get(f"{TODOIST_API}/sections?project_id={project_id}", headers=HEADERS)
+        response.raise_for_status()
+        sections = response.json()
+        
+        if task_logger:
+            task_logger.info(f"SECTIONS: Retrieved {len(sections)} sections for project {project_id}")
+        
+        return {section['name']: section['id'] for section in sections}
+    except Exception as e:
+        if task_logger:
+            task_logger.error(f"SECTIONS_ERROR: Failed to get sections for project {project_id}: {e}")
+        log_warning(f"Failed to get sections for project {project_id}: {e}")
+        return {}
+
+
+def create_section_if_missing(section_name, project_id, task_logger=None):
+    """Create a section if it doesn't exist, return section_id"""
+    try:
+        # First check if section already exists
+        sections = get_project_sections(project_id, task_logger)
+        if section_name in sections:
+            return sections[section_name]
+        
+        # Create new section
+        create_data = {
+            "name": section_name,
+            "project_id": project_id
+        }
+        
+        response = requests.post(f"{TODOIST_API}/sections", headers=HEADERS, json=create_data)
+        if response.status_code in (200, 201):
+            section_data = response.json()
+            section_id = section_data['id']
+            
+            if task_logger:
+                task_logger.info(f"SECTION_CREATED: Created section '{section_name}' (ID: {section_id}) in project {project_id}")
+            log_info(f"📂 Created section: {section_name}")
+            
+            return section_id
+        else:
+            if task_logger:
+                task_logger.error(f"SECTION_CREATE_FAILED: Failed to create section '{section_name}' (HTTP {response.status_code})")
+            return None
+            
+    except Exception as e:
+        if task_logger:
+            task_logger.error(f"SECTION_CREATE_ERROR: Error creating section '{section_name}': {e}")
+        log_warning(f"Failed to create section {section_name}: {e}")
+        return None
+
+
+def move_task_to_section(task_id, section_id, task_logger=None):
+    """Move a task to a specific section"""
+    try:
+        update_data = {"section_id": section_id}
+        response = requests.post(f"{TODOIST_API}/tasks/{task_id}", headers=HEADERS, json=update_data)
+        
+        if response.status_code in (200, 204):
+            if task_logger:
+                task_logger.info(f"TASK_MOVED: Task {task_id} moved to section {section_id}")
+            return True
+        else:
+            if task_logger:
+                task_logger.error(f"TASK_MOVE_FAILED: Failed to move task {task_id} to section {section_id} (HTTP {response.status_code})")
+            return False
+            
+    except Exception as e:
+        if task_logger:
+            task_logger.error(f"TASK_MOVE_ERROR: Error moving task {task_id} to section {section_id}: {e}")
+        log_warning(f"Failed to move task {task_id} to section: {e}")
+        return False
+
+
 def log_task_action(task_logger, task_id, task_content, action, **kwargs):
     """Log task processing action with details"""
     # Truncate very long content for readability
@@ -539,6 +616,12 @@ def log_task_action(task_logger, task_id, task_content, action, **kwargs):
     
     if 'source' in kwargs and kwargs['source']:
         log_parts.append(f"Source: {kwargs['source']}")
+    
+    if 'section' in kwargs and kwargs['section']:
+        log_parts.append(f"Section: {kwargs['section']}")
+    
+    if 'rule_source' in kwargs and kwargs['rule_source']:
+        log_parts.append(f"Rule: {kwargs['rule_source']}")
     
     log_message = " | ".join(log_parts)
     task_logger.info(log_message)
@@ -1219,6 +1302,57 @@ def main(test_mode=False):
                 # No labels to apply
                 log_task_action(task_logger, task['id'], task['content'], "NO_LABELS",
                               reason="no rules matched and no GPT suggestions")
+
+            # Handle section routing for matching rules
+            sections_to_move = []
+            for rule_info in applied_rules:
+                if rule_info.get('move_to') and rule_info.get('source') == 'rule':
+                    sections_to_move.append({
+                        'section_name': rule_info['move_to'],
+                        'create_if_missing': rule_info.get('create_if_missing', False),
+                        'rule_source': rule_info.get('matcher', 'unknown')
+                    })
+            
+            # Move to section if specified in rules
+            if sections_to_move and not args.dry_run:
+                # Use the first matching rule's section (prioritize by rule order)
+                section_info = sections_to_move[0]
+                section_name = section_info['section_name']
+                project_id = task.get('project_id')
+                
+                if project_id:
+                    # Get or create section
+                    section_id = None
+                    if section_info['create_if_missing']:
+                        section_id = create_section_if_missing(section_name, project_id, task_logger)
+                    else:
+                        sections = get_project_sections(project_id, task_logger)
+                        section_id = sections.get(section_name)
+                    
+                    # Move task to section
+                    if section_id:
+                        move_success = move_task_to_section(task['id'], section_id, task_logger)
+                        if move_success:
+                            if args.verbose:
+                                log_success(f"📂 Moved task to section: {section_name}")
+                            
+                            log_task_action(task_logger, task['id'], task['content'], "MOVED_TO_SECTION",
+                                          section=section_name, rule_source=section_info['rule_source'])
+                        else:
+                            log_task_action(task_logger, task['id'], task['content'], "MOVE_FAILED",
+                                          error=f"Failed to move to section {section_name}")
+                    else:
+                        log_task_action(task_logger, task['id'], task['content'], "SECTION_NOT_FOUND",
+                                      reason=f"Section '{section_name}' not found and create_if_missing=False")
+                else:
+                    log_task_action(task_logger, task['id'], task['content'], "NO_PROJECT_ID",
+                                  reason="Cannot move to section without project_id")
+            elif sections_to_move and args.dry_run:
+                # Log what would happen in dry run
+                section_name = sections_to_move[0]['section_name']
+                log_info(f"📂 Would move task to section: {section_name}", "cyan")
+                log_task_action(task_logger, task['id'], task['content'], "WOULD_MOVE_TO_SECTION",
+                              section=section_name, rule_source=sections_to_move[0]['rule_source'])
 
             # Separate URL processing for link formatting (independent of labeling)
             if has_any_link:
