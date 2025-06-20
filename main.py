@@ -620,15 +620,25 @@ def main(test_mode=False):
     
     try:
         projects_response = requests.get(f"{TODOIST_API}/projects", headers=HEADERS)
+        task_logger.info(f"API Response Status: {projects_response.status_code}")
+        task_logger.info(f"API Response Headers: {dict(projects_response.headers)}")
+        task_logger.info(f"API Response Content (first 500 chars): {projects_response.text[:500]}")
+        
         projects_response.raise_for_status()
         all_projects = projects_response.json()
     except requests.exceptions.JSONDecodeError:
         log_error("❌ Failed to parse Todoist API response. Check your TODOIST_API_TOKEN.")
+        log_error(f"Response status: {projects_response.status_code}")
+        log_error(f"Response content: {projects_response.text[:500]}")
         task_logger.error("API Error: Invalid JSON response from Todoist API - likely invalid token")
+        task_logger.error(f"Response status: {projects_response.status_code}")
+        task_logger.error(f"Response content: {projects_response.text[:500]}")
         return
     except requests.exceptions.HTTPError as e:
         log_error(f"❌ Todoist API HTTP error: {e}")
+        log_error(f"Response content: {projects_response.text[:500]}")
         task_logger.error(f"API Error: HTTP {projects_response.status_code} - {e}")
+        task_logger.error(f"Response content: {projects_response.text[:500]}")
         return
     except Exception as e:
         log_error(f"❌ Failed to fetch projects: {e}")
@@ -650,7 +660,11 @@ def main(test_mode=False):
         mode_info.append("VERBOSE")
     
     mode_str = f"[{', '.join(mode_info)}]" if mode_info else "[NORMAL]"
+    # Log masked token for debugging (show first 8 and last 4 chars)
+    token = os.environ.get('TODOIST_API_TOKEN', '')
+    masked_token = f"{token[:8]}...{token[-4:]}" if len(token) > 12 else "TOKEN_TOO_SHORT"
     task_logger.info(f"=== SESSION START {mode_str} ===")
+    task_logger.info(f"Using API token: {masked_token}")
 
     if test_mode:
         log_info("🧪 Running in test mode...")
