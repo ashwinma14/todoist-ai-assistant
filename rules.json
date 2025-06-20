@@ -1,0 +1,46 @@
+[
+  {
+    "match": "url",
+    "label": "link"
+  },
+  {
+    "contains": ["follow up", "email", "reach out", "contact"],
+    "label": "followup",
+    "create_if_missing": true
+  },
+  {
+    "prefix": "!",
+    "label": "urgent",
+    "create_if_missing": true
+  },
+  {
+    "prefix": "@",
+    "label": "person",
+    "create_if_missing": true
+  },
+  {
+    "contains": ["meeting", "call", "zoom", "teams"],
+    "label": "meeting",
+    "create_if_missing": true
+  },
+  {
+    "contains": ["buy", "purchase", "order", "shopping"],
+    "label": "shopping",
+    "create_if_missing": true
+  },
+  {
+    "contains": ["read", "article", "book", "blog"],
+    "label": "reading",
+    "create_if_missing": true
+  },
+  {
+    "regex": "\\b(bug|fix|issue|error)\\b",
+    "label": "bug",
+    "create_if_missing": true
+  },
+  {
+    "contains": ["idea", "brainstorm", "concept"],
+    "label": "idea",
+    "create_if_missing": true
+  }
+]

@@ -221,6 +221,149 @@ def should_process_task(task, last_run_time, task_logger=None):
     return True, "needs processing"
 
 
+def load_rules(rules_file='rules.json'):
+    """Load labeling rules from JSON file"""
+    try:
+        with open(rules_file, 'r') as f:
+            rules = json.load(f)
+        log_info(f"📋 Loaded {len(rules)} labeling rules from {rules_file}")
+        return rules
+    except FileNotFoundError:
+        log_warning(f"Rules file {rules_file} not found - using URL-only labeling")
+        return [{"match": "url", "label": "link"}]  # Default rule
+    except json.JSONDecodeError as e:
+        log_error(f"Invalid JSON in {rules_file}: {e}")
+        return [{"match": "url", "label": "link"}]  # Default rule
+    except Exception as e:
+        log_error(f"Error loading rules: {e}")
+        return [{"match": "url", "label": "link"}]  # Default rule
+
+
+def evaluate_rule(rule, task_content):
+    """Evaluate a single rule against task content"""
+    content_lower = task_content.lower()
+    
+    # URL matcher
+    if rule.get("match") == "url":
+        return bool(re.search(r'https?://\S+', task_content))
+    
+    # Contains matcher
+    if "contains" in rule:
+        keywords = rule["contains"]
+        if isinstance(keywords, str):
+            keywords = [keywords]
+        return any(keyword.lower() in content_lower for keyword in keywords)
+    
+    # Prefix matcher
+    if "prefix" in rule:
+        prefix = rule["prefix"]
+        return task_content.strip().startswith(prefix)
+    
+    # Regex matcher
+    if "regex" in rule:
+        try:
+            pattern = rule["regex"]
+            return bool(re.search(pattern, task_content, re.IGNORECASE))
+        except re.error as e:
+            log_warning(f"Invalid regex pattern '{pattern}': {e}")
+            return False
+    
+    return False
+
+
+def apply_rules_to_task(task, rules, task_logger=None):
+    """Apply all matching rules to a task and return labels to add"""
+    content = task['content']
+    task_id = task['id']
+    labels_to_add = []
+    applied_rules = []
+    
+    for i, rule in enumerate(rules):
+        if evaluate_rule(rule, content):
+            label = rule.get("label")
+            if label:
+                labels_to_add.append(label)
+                rule_info = {
+                    "rule_index": i,
+                    "label": label,
+                    "matcher": get_rule_matcher_type(rule),
+                    "create_if_missing": rule.get("create_if_missing", False)
+                }
+                applied_rules.append(rule_info)
+                
+                if task_logger:
+                    matcher_desc = get_rule_description(rule)
+                    task_logger.info(f"Task {task_id} | RULE_MATCH: Rule {i} matched ({matcher_desc}) → #{label}")
+    
+    return labels_to_add, applied_rules
+
+
+def get_rule_matcher_type(rule):
+    """Get a description of what type of matcher the rule uses"""
+    if rule.get("match") == "url":
+        return "url"
+    elif "contains" in rule:
+        return "contains"
+    elif "prefix" in rule:
+        return "prefix"
+    elif "regex" in rule:
+        return "regex"
+    else:
+        return "unknown"
+
+
+def get_rule_description(rule):
+    """Get a human-readable description of the rule"""
+    if rule.get("match") == "url":
+        return "URL detected"
+    elif "contains" in rule:
+        keywords = rule["contains"]
+        if isinstance(keywords, list):
+            keywords_str = ", ".join(keywords[:2])
+            if len(keywords) > 2:
+                keywords_str += f", +{len(keywords)-2} more"
+        else:
+            keywords_str = keywords
+        return f"contains: {keywords_str}"
+    elif "prefix" in rule:
+        return f"starts with: '{rule['prefix']}'"
+    elif "regex" in rule:
+        return f"regex: {rule['regex'][:20]}..."
+    else:
+        return "unknown rule"
+
+
+def create_label_if_missing(label_name, task_logger=None):
+    """Create a label if it doesn't exist"""
+    try:
+        # Check if label already exists
+        r = requests.get(f"{TODOIST_API}/labels", headers=HEADERS)
+        r.raise_for_status()
+        existing_labels = {label['name'].lower(): label['id'] for label in r.json()}
+        
+        if label_name.lower() in existing_labels:
+            return existing_labels[label_name.lower()]
+        
+        # Create new label
+        create_resp = requests.post(f"{TODOIST_API}/labels", headers=HEADERS, 
+                                  json={"name": label_name})
+        if create_resp.status_code in (200, 201):
+            label_data = create_resp.json()
+            if task_logger:
+                task_logger.info(f"LABEL_CREATED: Created new label '#{label_name}' (ID: {label_data['id']})")
+            log_info(f"📝 Created new label: #{label_name}")
+            return label_data['id']
+        else:
+            if task_logger:
+                task_logger.error(f"LABEL_CREATE_FAILED: Failed to create label '#{label_name}' (HTTP {create_resp.status_code})")
+            return None
+    except Exception as e:
+        if task_logger:
+            task_logger.error(f"LABEL_CREATE_ERROR: Error creating label '#{label_name}': {e}")
+        log_warning(f"Failed to create label #{label_name}: {e}")
+        return None
+
+
 def log_task_action(task_logger, task_id, task_content, action, **kwargs):
     """Log task processing action with details"""
     # Truncate very long content for readability
@@ -300,7 +443,7 @@ def resolve_redirect(url):
     try:
         r = requests.head(url, allow_redirects=True, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
         return r.url
-    except Exception as e:
+    except Exception:
         return url
 
 
@@ -707,6 +850,9 @@ def main(test_mode=False):
     summary = TaskSummary()
     task_logger = setup_task_logging()
     
+    # Load labeling rules
+    rules = load_rules()
+    
     parser = argparse.ArgumentParser()
     parser.add_argument("--project", type=str, help="Comma-separated list of project names to process")
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose output")
@@ -802,7 +948,6 @@ def main(test_mode=False):
         return  # Exit after test mode
 
     if not test_mode:
-        label_id = get_label_id()
         tasks = []
         for pid in project_ids:
             tasks.extend(fetch_tasks(pid))
@@ -863,7 +1008,10 @@ def main(test_mode=False):
             
             content = task['content']
             
-            # Check if task contains any links
+            # Apply rule-based labeling
+            rule_labels, applied_rules = apply_rules_to_task(task, rules, task_logger)
+            
+            # Check if task contains any links for URL processing
             has_any_link = re.search(r'https?://\S+', content)
             
             if has_any_link:
@@ -874,27 +1022,36 @@ def main(test_mode=False):
                     url_count = len(urls)
                     log_info(f"🔗 Found {url_count} URL{'s' if url_count != 1 else ''} in task")
                 
-                # Collect all domain labels from all URLs
-                all_labels = set(['link'])
+                # Collect domain labels from URLs (in addition to rule-based labels)
+                domain_labels = set()
                 for url_info in urls:
                     domain_label = get_domain_label(url_info['url'])
                     if domain_label:
-                        all_labels.add(domain_label)
+                        domain_labels.add(domain_label)
+                
+                # Combine rule-based labels with domain labels
+                all_labels = set(rule_labels) | domain_labels
                 
                 # Add labels that don't already exist
                 existing_labels = task.get("labels", [])
                 labels_to_add = list(all_labels)
                 new_labels = [label for label in labels_to_add if label not in existing_labels]
                 
+                # Handle label creation for rules that require it
+                for rule_info in applied_rules:
+                    if rule_info.get('create_if_missing', False) and rule_info['label'] in new_labels:
+                        if not args.dry_run:
+                            create_label_if_missing(rule_info['label'], task_logger)
+                
                 if new_labels:
                     success = update_task(task, None, None, new_labels, summary, args.dry_run)
                     if success:
-                        # Track domain labels for summary
+                        # Track labels for summary
                         for label in new_labels:
-                            if label != 'link':
-                                summary.labeled(label)
+                            if label in domain_labels and label != 'link':
+                                summary.labeled(label)  # Domain-specific label
                             else:
-                                summary.labeled()
+                                summary.labeled()  # Rule-based or generic label
                         
                         if args.verbose and not args.dry_run:
                             log_success(f"🏷️  Tagged task with labels: {new_labels}")
@@ -957,9 +1114,41 @@ def main(test_mode=False):
                         log_task_action(task_logger, task['id'], task['content'], "SKIPPED",
                                       url=first_url, reason="no valid titles found")
             else:
-                # Log tasks without URLs (no action taken)
-                log_task_action(task_logger, task['id'], task['content'], "NO_ACTION",
-                              reason="no URL found")
+                # Task has no URLs, but check if any non-URL rules apply
+                if rule_labels:
+                    existing_labels = task.get("labels", [])
+                    new_labels = [label for label in rule_labels if label not in existing_labels]
+                    
+                    # Handle label creation for rules that require it
+                    for rule_info in applied_rules:
+                        if rule_info.get('create_if_missing', False) and rule_info['label'] in new_labels:
+                            if not args.dry_run:
+                                create_label_if_missing(rule_info['label'], task_logger)
+                    
+                    if new_labels:
+                        success = update_task(task, None, None, new_labels, summary, args.dry_run)
+                        if success:
+                            for label in new_labels:
+                                summary.labeled()
+                            
+                            if args.verbose and not args.dry_run:
+                                log_success(f"🏷️  Tagged task with rule-based labels: {new_labels}")
+                            
+                            # Log the rule-based labeling action
+                            action = "RULE_LABELED_DRY_RUN" if args.dry_run else "RULE_LABELED"
+                            log_task_action(task_logger, task['id'], task['content'], action, 
+                                          labels=new_labels)
+                        else:
+                            log_task_action(task_logger, task['id'], task['content'], "FAILED",
+                                          error="Failed to apply rule-based labels")
+                    else:
+                        # Rules matched but no new labels to add
+                        log_task_action(task_logger, task['id'], task['content'], "RULES_MATCHED_NO_NEW_LABELS",
+                                      reason="all matching rule labels already exist")
+                else:
+                    # No rules matched (including no URLs)
+                    log_task_action(task_logger, task['id'], task['content'], "NO_ACTION",
+                                  reason="no rules matched")
 
         # Save timestamp for next incremental run (only if not dry run and not test mode)
         if not args.dry_run and not test_mode and not force_full_scan:
