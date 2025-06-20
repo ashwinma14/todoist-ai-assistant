@@ -1,6 +1,6 @@
 # Todoist Processor
 
-A powerful and intuitive task automation tool that transforms your Todoist task list into an organized, manageable workflow. It intelligently processes tasks by detecting and formatting URLs, applying smart labels based on customizable rules, leveraging AI to categorize tasks without clear matches, and automatically organizing tasks into appropriate sections. Whether you’re managing work projects, personal errands, or media links, this tool helps you save time and stay focused with minimal manual effort.
+A powerful and intuitive task automation tool that transforms your [Todoist](https://todoist.com) task list into an organized, manageable workflow. It intelligently processes tasks by detecting and formatting URLs, applying smart labels based on customizable rules, leveraging AI to categorize tasks without clear matches, and automatically organizing tasks into appropriate sections. Whether you’re managing work projects, personal errands, or media links, this tool helps you save time and stay focused with minimal manual effort.
 
 ---
 
