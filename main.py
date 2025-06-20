@@ -113,6 +113,9 @@ def log_success(message):
 def log_warning(message):
     """Print warning message"""
     log_info(message, "yellow")
+    # Force flush output for Render
+    import sys
+    sys.stdout.flush()
 
 def log_error(message):
     """Print error message"""
@@ -529,7 +532,7 @@ def fetch_page_title(url):
                         return f"{clean_title} (r/{subreddit})"
                 except Exception as e:
                     # Log Reddit JSON API failures for debugging
-                    print(f"DEBUG: Reddit JSON API failed for {url}: {str(e)}")
+                    log_warning(f"Reddit JSON API failed for {url}: {str(e)}")
                     pass
                 
                 # 2) Try old Reddit with better headers and session
@@ -645,9 +648,9 @@ def fetch_page_title(url):
         from urllib.parse import urlparse
         try:
             domain = urlparse(url).netloc
-            print(f"DEBUG: Title fetch failed for {domain}: {str(e)}")
+            log_warning(f"Title fetch failed for {domain}: {str(e)}")
         except:
-            print(f"DEBUG: Title fetch failed for {url[:50]}...: {str(e)}")
+            log_warning(f"Title fetch failed for {url[:50]}...: {str(e)}")
         pass
     return None
 
@@ -859,7 +862,27 @@ def main(test_mode=False):
         if skipped_count > 0:
             log_info(f"⏭️  Skipped {skipped_count} tasks (already processed or no changes needed)", "yellow")
         
+        # Count domains being processed
+        domain_count = {}
+        for task in tasks_to_process:
+            urls = extract_all_urls(task['content'])
+            for url_info in urls:
+                try:
+                    from urllib.parse import urlparse
+                    domain = urlparse(url_info['url']).netloc.lower()
+                    if domain.startswith('www.'):
+                        domain = domain[4:]
+                    domain_count[domain] = domain_count.get(domain, 0) + 1
+                except:
+                    pass
+        
+        if domain_count:
+            top_domains = sorted(domain_count.items(), key=lambda x: x[1], reverse=True)[:5]
+            domain_summary = ", ".join([f"{domain}({count})" for domain, count in top_domains])
+            log_info(f"🌐 Top domains: {domain_summary}")
+        
         task_logger.info(f"Processing {len(tasks_to_process)}/{len(tasks)} tasks from projects: {[p['name'] for p in all_projects if p['id'] in project_ids]}")
+        task_logger.info(f"Domain breakdown: {domain_count}")
 
         for task in tasks_to_process:
             if args.verbose:
