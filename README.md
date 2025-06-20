@@ -22,6 +22,11 @@ Turn raw URLs in your Todoist tasks into titled markdown links—automatically. 
 - `--test`: Try URL parsing in isolation
 - `--verbose`: View detailed step-by-step logs
 
+### ⚡ Efficient Processing
+- **Incremental Mode**: Only processes new tasks created since last run
+- **Smart Skipping**: Avoids re-processing tasks that already have proper labels
+- **Timestamp Tracking**: Maintains `last_run.txt` for optimal cron job performance
+
 ### 📊 Clean Output
 - Easy-to-read CLI interface (with optional color via `rich`)
 - Summarizes updated, tagged, skipped, and failed tasks
@@ -45,7 +50,7 @@ Get your Todoist token from [Integrations Settings](https://todoist.com/prefs/in
 ## ▶️ How to Use It
 
 ```bash
-# Process all tasks in your Inbox
+# Process all tasks in your Inbox (incremental mode)
 python main.py
 
 # Dry run (no changes made)
@@ -53,6 +58,9 @@ python main.py --dry-run
 
 # Process specific projects
 python main.py --project "Work,Personal"
+
+# Force full scan (ignore timestamp, process all tasks)
+python main.py --full-scan
 
 # Test link processing only
 python main.py --test
@@ -102,6 +110,7 @@ Labels added: `link`, `github`, `youtube`
 - `--dry-run`: Preview only
 - `--verbose`, `-v`: Print detailed logs
 - `--test`: Test URL parsing only
+- `--full-scan`: Process all tasks (ignore incremental mode)
 
 ---
 

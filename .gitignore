@@ -4,3 +4,4 @@ __pycache__/
 task_log.txt
 *.log
 .vscode/
+last_run.txt
