@@ -7,7 +7,8 @@ import requests
 from bs4 import BeautifulSoup
 import argparse
 import logging
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
+import json
 
 # Try to import rich for colored output, fallback to regular print
 try:
@@ -143,6 +144,78 @@ def setup_task_logging():
     task_logger.addHandler(file_handler)
     
     return task_logger
+
+
+def get_last_run_timestamp():
+    """Get the timestamp of the last successful run"""
+    try:
+        with open('last_run.txt', 'r') as f:
+            timestamp_str = f.read().strip()
+            return datetime.fromisoformat(timestamp_str)
+    except FileNotFoundError:
+        # First time run: default to 1 hour ago
+        return datetime.now(timezone.utc) - timedelta(hours=1)
+    except Exception as e:
+        log_warning(f"Failed to read last run timestamp: {e}")
+        return datetime.now(timezone.utc) - timedelta(hours=1)
+
+
+def save_last_run_timestamp():
+    """Save the current timestamp as the last successful run"""
+    try:
+        timestamp = datetime.now(timezone.utc).isoformat()
+        with open('last_run.txt', 'w') as f:
+            f.write(timestamp)
+    except Exception as e:
+        log_warning(f"Failed to save last run timestamp: {e}")
+
+
+def parse_todoist_datetime(date_str):
+    """Parse Todoist's datetime format to datetime object"""
+    try:
+        # Todoist uses ISO format like "2023-12-18T21:26:44.000000Z"
+        if date_str.endswith('Z'):
+            date_str = date_str[:-1] + '+00:00'
+        return datetime.fromisoformat(date_str)
+    except Exception:
+        return None
+
+
+def should_process_task(task, last_run_time, task_logger=None):
+    """Determine if a task should be processed based on creation time and existing labels"""
+    task_id = task['id']
+    
+    # Check creation time
+    created_at = parse_todoist_datetime(task.get('created_at', ''))
+    if created_at and created_at <= last_run_time:
+        if task_logger:
+            task_logger.info(f"Task {task_id} | Skipping: created before last run ({created_at} <= {last_run_time})")
+        return False, "created before last run"
+    
+    # Check if task has any URLs
+    content = task['content']
+    has_any_link = re.search(r'https?://\S+', content)
+    if not has_any_link:
+        return False, "no URLs found"
+    
+    # Check existing labels
+    existing_labels = set(task.get('labels', []))
+    
+    # Extract all URLs to check for domain labels
+    urls = extract_all_urls(content)
+    expected_labels = set(['link'])
+    for url_info in urls:
+        domain_label = get_domain_label(url_info['url'])
+        if domain_label:
+            expected_labels.add(domain_label)
+    
+    # If task already has all expected labels, skip it
+    if expected_labels.issubset(existing_labels):
+        if task_logger:
+            task_logger.info(f"Task {task_id} | Skipping: already has all expected labels {expected_labels}")
+        return False, "already fully labeled"
+    
+    return True, "needs processing"
 
 
 def log_task_action(task_logger, task_id, task_content, action, **kwargs):
@@ -627,6 +700,7 @@ def main(test_mode=False):
     parser.add_argument("--project", type=str, help="Comma-separated list of project names to process")
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose output")
     parser.add_argument("--dry-run", action="store_true", help="Preview changes without modifying any tasks")
+    parser.add_argument("--full-scan", action="store_true", help="Process all tasks, ignoring last run timestamp")
     args, _ = parser.parse_known_args()
 
     if args.project:
@@ -669,6 +743,11 @@ def main(test_mode=False):
         log_warning("No matching projects found")
         return
 
+    # Get last run timestamp for incremental processing
+    last_run_time = None
+    if not args.full_scan and not test_mode:
+        last_run_time = get_last_run_timestamp()
+    
     # Log session start
     mode_info = []
     if test_mode:
@@ -677,6 +756,10 @@ def main(test_mode=False):
         mode_info.append("DRY_RUN")
     if args.verbose:
         mode_info.append("VERBOSE")
+    if args.full_scan:
+        mode_info.append("FULL_SCAN")
+    elif last_run_time:
+        mode_info.append("INCREMENTAL")
     
     mode_str = f"[{', '.join(mode_info)}]" if mode_info else "[NORMAL]"
     # Log masked token for debugging (show first 8 and last 4 chars)
@@ -687,6 +770,10 @@ def main(test_mode=False):
     task_logger.info(f"Token length: {len(token)}")
     task_logger.info(f"Token has whitespace: {token != token.strip()}")
     task_logger.info(f"Authorization header: Bearer {token[:8]}...{token[-4:] if len(token) > 12 else 'SHORT'}")
+    
+    if last_run_time:
+        task_logger.info(f"Last run timestamp: {last_run_time}")
+        log_info(f"🕒 Processing tasks created after: {last_run_time.strftime('%Y-%m-%d %H:%M:%S UTC')}", "cyan")
 
     if test_mode:
         log_info("🧪 Running in test mode...")
@@ -717,10 +804,28 @@ def main(test_mode=False):
             log_info("🧪 DRY RUN MODE - No changes will be made to your tasks", "yellow")
             log_info("=" * 60, "yellow")
 
-        log_info(f"🔍 Processing {len(tasks)} tasks from {len(project_ids)} project(s)...")
-        task_logger.info(f"Processing {len(tasks)} tasks from projects: {[p['name'] for p in all_projects if p['id'] in project_ids]}")
-
+        # Filter tasks based on incremental processing logic
+        tasks_to_process = []
+        skipped_count = 0
+        
         for task in tasks:
+            if last_run_time:
+                should_process, reason = should_process_task(task, last_run_time, task_logger)
+                if should_process:
+                    tasks_to_process.append(task)
+                else:
+                    skipped_count += 1
+                    summary.skipped(reason)
+            else:
+                tasks_to_process.append(task)
+        
+        log_info(f"🔍 Found {len(tasks)} total tasks, processing {len(tasks_to_process)} tasks from {len(project_ids)} project(s)...")
+        if skipped_count > 0:
+            log_info(f"⏭️  Skipped {skipped_count} tasks (already processed or no changes needed)", "yellow")
+        
+        task_logger.info(f"Processing {len(tasks_to_process)}/{len(tasks)} tasks from projects: {[p['name'] for p in all_projects if p['id'] in project_ids]}")
+
+        for task in tasks_to_process:
             if args.verbose:
                 log_info(f"📋 Processing: {task['content'][:50]}{'...' if len(task['content']) > 50 else ''}")
             
@@ -812,6 +917,11 @@ def main(test_mode=False):
                 log_task_action(task_logger, task['id'], task['content'], "NO_ACTION",
                               reason="no URL found")
 
+        # Save timestamp for next incremental run (only if not dry run and not test mode)
+        if not args.dry_run and not test_mode and not args.full_scan:
+            save_last_run_timestamp()
+            task_logger.info("Saved timestamp for next incremental run")
+        
         # Log session end with summary
         task_logger.info(f"=== SESSION END | Updated: {summary.tasks_updated} | Labeled: {summary.tasks_labeled} | Skipped: {summary.tasks_skipped} | Failed: {summary.tasks_failed} ===")
         
