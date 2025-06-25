@@ -200,29 +200,30 @@ def should_process_task(task, last_run_time, task_logger=None):
             task_logger.info(f"Task {task_id} | Skipping: created before last run ({created_at} <= {last_run_time})")
         return False, "created before last run"
     
-    # Check if task has any URLs
+    # Get task content for processing
     content = task['content']
-    has_any_link = re.search(r'https?://\S+', content)
-    if not has_any_link:
-        return False, "no URLs found"
-    
-    # Check existing labels
     existing_labels = set(task.get('labels', []))
     
-    # Extract all URLs to check for domain labels
-    urls = extract_all_urls(content)
-    expected_labels = set(['link'])
-    for url_info in urls:
-        domain_label = get_domain_label(url_info['url'])
-        if domain_label:
-            expected_labels.add(domain_label)
+    # Check if task has URLs
+    has_any_link = re.search(r'https?://\S+', content)
     
-    # If task already has all expected labels, skip it
-    if expected_labels.issubset(existing_labels):
-        if task_logger:
-            task_logger.info(f"Task {task_id} | Skipping: already has all expected labels {expected_labels}")
-        return False, "already fully labeled"
+    if has_any_link:
+        # For URL tasks, check if they have expected URL labels
+        urls = extract_all_urls(content)
+        expected_labels = set(['link'])
+        for url_info in urls:
+            domain_label = get_domain_label(url_info['url'])
+            if domain_label:
+                expected_labels.add(domain_label)
+        
+        # If task already has all expected URL labels, skip URL processing
+        if expected_labels.issubset(existing_labels):
+            if task_logger:
+                task_logger.info(f"Task {task_id} | Skipping: already has all expected URL labels {expected_labels}")
+            return False, "already fully labeled"
     
+    # Always allow processing for rule-based labeling and GPT fallback
+    # This ensures non-URL tasks can still be processed by rules or GPT
     return True, "needs processing"
 
 
