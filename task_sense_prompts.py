@@ -110,10 +110,13 @@ class TaskSensePrompts:
         
         return "\n\n".join(prompt_parts)
     
-    def get_time_based_mode(self) -> str:
+    def get_time_based_mode(self, config: Dict[str, Any] = None) -> str:
         """
-        Determine appropriate mode based on current time.
+        Determine appropriate mode based on current time and config rules.
         
+        Args:
+            config: Optional configuration with time-based rules
+            
         Returns:
             Suggested mode based on time of day and day of week
         """
@@ -121,14 +124,26 @@ class TaskSensePrompts:
         hour = now.hour
         weekday = now.weekday()  # 0=Monday, 6=Sunday
         
+        # Load time-based configuration
+        if config and config.get('time_based_modes', {}).get('enabled', True):
+            time_config = config['time_based_modes']
+            work_hours = time_config.get('weekday_work_hours', [9, 17])
+            evening_hours = time_config.get('evening_hours', [18, 22])
+            weekend_days = time_config.get('weekend_days', [5, 6])
+        else:
+            # Default configuration
+            work_hours = [9, 17]
+            evening_hours = [18, 22]
+            weekend_days = [5, 6]
+        
         # Weekend detection
-        if weekday >= 5:  # Saturday or Sunday
+        if weekday in weekend_days:
             return "weekend"
         
         # Weekday time-based modes
-        if 9 <= hour <= 17:  # Business hours
+        if work_hours[0] <= hour <= work_hours[1]:  # Business hours
             return "work"
-        elif 18 <= hour <= 22:  # Evening
+        elif evening_hours[0] <= hour <= evening_hours[1]:  # Evening
             return "evening"
         else:  # Early morning or late night
             return "personal"

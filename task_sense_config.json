@@ -63,9 +63,45 @@
     "temperature": 0.3,
     "max_tokens": 150
   },
+  "gpt_fallback": {
+    "enabled": true,
+    "model": "gpt-3.5-turbo",
+    "base_prompt": "You are a productivity assistant. Assign the most relevant label to this Todoist task using one or two from this list: ['work', 'personal', 'admin', 'media', 'urgent', 'followup', 'home']",
+    "user_prompt_extension": "If it's a household chore, prefer 'home'.",
+    "create_if_missing": false,
+    "temperature": 0.3,
+    "max_tokens": 150
+  },
   "logging": {
     "log_explanations": true,
     "log_confidence": true,
     "log_mode_detection": true
+  },
+  "mock_mode": {
+    "enabled": false,
+    "responses": {
+      "default": {
+        "labels": ["work", "personal"],
+        "explanation": "Mock response for testing",
+        "confidence": 0.8
+      },
+      "patterns": {
+        "meeting": {
+          "labels": ["work", "meeting"],
+          "explanation": "Mock response for meeting task",
+          "confidence": 0.9
+        },
+        "grocery": {
+          "labels": ["personal", "home"],
+          "explanation": "Mock response for grocery task",
+          "confidence": 0.85
+        },
+        "doctor": {
+          "labels": ["personal", "health"],
+          "explanation": "Mock response for health task",
+          "confidence": 0.9
+        }
+      }
+    }
   }
 }

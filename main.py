@@ -266,6 +266,77 @@ def load_rules(rules_file='rules.json'):
         return [{"match": "url", "label": "link"}], None  # Default rule
 
 
+def load_unified_config(cli_args=None):
+    """
+    Load configuration with hierarchy: CLI flags → env vars → task_sense_config → rules.json fallback
+    Returns: (rules, gpt_fallback, tasksense_config)
+    """
+    # Start with defaults
+    rules = []
+    gpt_fallback = None
+    tasksense_config = None
+    
+    # 1. Load TaskSense config (primary source)
+    try:
+        with open('task_sense_config.json', 'r') as f:
+            tasksense_config = json.load(f)
+            
+        # Extract GPT fallback from TaskSense config
+        gpt_fallback = tasksense_config.get('gpt_fallback')
+        log_info("📋 Loaded TaskSense configuration")
+        
+        if gpt_fallback and gpt_fallback.get('enabled'):
+            log_info(f"🤖 GPT fallback enabled using model: {gpt_fallback.get('model', 'gpt-3.5-turbo')}")
+            
+    except FileNotFoundError:
+        log_warning("⚠️ TaskSense config not found, falling back to rules.json")
+    except json.JSONDecodeError as e:
+        log_error(f"❌ Invalid JSON in task_sense_config.json: {e}")
+    except Exception as e:
+        log_error(f"❌ Error loading TaskSense config: {e}")
+    
+    # 2. Load rules.json (for labeling rules and fallback GPT config)
+    try:
+        with open('rules.json', 'r') as f:
+            rules_config = json.load(f)
+            
+        # Handle both old format (array) and new format (object with rules and gpt_fallback)
+        if isinstance(rules_config, list):
+            # Old format - just rules array
+            rules = rules_config
+            # Keep existing gpt_fallback from TaskSense config
+        else:
+            # New format - object with rules and gpt_fallback
+            rules = rules_config.get('rules', [])
+            
+            # Use rules.json GPT fallback only if TaskSense doesn't have one
+            if not gpt_fallback and rules_config.get('gpt_fallback'):
+                gpt_fallback = rules_config.get('gpt_fallback')
+                log_info("🤖 Using GPT fallback from rules.json")
+                
+        log_info(f"📋 Loaded {len(rules)} labeling rules from rules.json")
+        
+    except FileNotFoundError:
+        log_warning("⚠️ Rules file not found")
+    except json.JSONDecodeError as e:
+        log_error(f"❌ Invalid JSON in rules.json: {e}")
+    except Exception as e:
+        log_error(f"❌ Error loading rules: {e}")
+    
+    # 3. Apply environment variable overrides
+    if os.getenv('DISABLE_GPT_FALLBACK', '').lower() in ('true', '1', 'yes'):
+        if gpt_fallback:
+            gpt_fallback['enabled'] = False
+            log_info("🔇 GPT fallback disabled by environment variable")
+    
+    # 4. Apply CLI flag overrides (if provided)
+    if cli_args:
+        # Future: Add CLI overrides for specific config values
+        pass
+    
+    return rules, gpt_fallback, tasksense_config
+
+
 def evaluate_rule(rule, task_content):
     """Evaluate a single rule against task content"""
     content_lower = task_content.lower()
@@ -298,7 +369,7 @@ def evaluate_rule(rule, task_content):
     return False
 
 
-def apply_rules_to_task(task, rules, gpt_fallback=None, task_logger=None):
+def apply_rules_to_task(task, rules, gpt_fallback=None, task_logger=None, mode=None, tasksense_config=None):
     """Apply all matching rules to a task and return labels to add, with TaskSense and GPT fallback"""
     content = task['content']
     task_id = task['id']
@@ -330,8 +401,14 @@ def apply_rules_to_task(task, rules, gpt_fallback=None, task_logger=None):
         # Try TaskSense first if available
         if TASKSENSE_AVAILABLE:
             try:
-                task_sense = TaskSense()
-                result = task_sense.label(content, dry_run=False)
+                # Initialize TaskSense with updated config
+                if tasksense_config:
+                    task_sense = TaskSense(config_path=None)
+                    task_sense.config = tasksense_config
+                else:
+                    task_sense = TaskSense()
+                    
+                result = task_sense.label(content, dry_run=False, mode=mode)
                 
                 if result and result.get('labels'):
                     tasksense_labels = result['labels']
@@ -1122,15 +1199,82 @@ def main(test_mode=False):
     summary = TaskSummary()
     task_logger = setup_task_logging()
     
-    # Load labeling rules and GPT fallback config
-    rules, gpt_fallback = load_rules()
-    
+    # Parse CLI arguments first
     parser = argparse.ArgumentParser()
     parser.add_argument("--project", type=str, help="Comma-separated list of project names to process")
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose output")
     parser.add_argument("--dry-run", action="store_true", help="Preview changes without modifying any tasks")
     parser.add_argument("--full-scan", action="store_true", help="Process all tasks, ignoring last run timestamp")
+    parser.add_argument("--mode", type=str, choices=['personal', 'work', 'weekend', 'evening', 'auto'], 
+                        help="Set TaskSense mode (personal, work, weekend, evening, auto)")
+    parser.add_argument("--label-task", type=str, help="Label a single task and exit (requires --mode)")
+    parser.add_argument("--tasksense-mock", action="store_true", help="Enable TaskSense mock mode for testing")
     args, _ = parser.parse_known_args()
+    
+    # Load unified configuration (CLI flags → env vars → task_sense_config → rules.json fallback)
+    rules, gpt_fallback, tasksense_config = load_unified_config()
+    
+    # Apply CLI overrides to TaskSense config
+    if args.tasksense_mock and tasksense_config:
+        if "mock_mode" not in tasksense_config:
+            tasksense_config["mock_mode"] = {}
+        tasksense_config["mock_mode"]["enabled"] = True
+        log_info("🎭 TaskSense mock mode enabled via CLI flag")
+
+    # Handle standalone task labeling
+    if args.label_task:
+        if not args.mode:
+            log_error("❌ --label-task requires --mode to be specified")
+            return
+        
+        # Initialize TaskSense with specified mode
+        if TASKSENSE_AVAILABLE:
+            try:
+                # Initialize TaskSense with updated config
+                if tasksense_config:
+                    task_sense = TaskSense(config_path=None)
+                    task_sense.config = tasksense_config
+                else:
+                    task_sense = TaskSense()
+                
+                # Use auto mode detection if specified
+                if args.mode == 'auto':
+                    from task_sense_prompts import TaskSensePrompts
+                    prompts = TaskSensePrompts()
+                    detected_mode = prompts.get_time_based_mode(tasksense_config)
+                    actual_mode = detected_mode
+                else:
+                    actual_mode = args.mode
+                
+                # Get labels for the task
+                result = task_sense.label(args.label_task, dry_run=args.dry_run, mode=actual_mode)
+                
+                if result and result.get('labels'):
+                    labels = result['labels']
+                    explanation = result.get('explanation', '')
+                    confidence = result.get('confidence', 0.8)
+                    
+                    if HAS_RICH:
+                        console.print(f"\n📝 Task: {args.label_task}", style="bold")
+                        console.print(f"🎯 Mode: {actual_mode}", style="blue")
+                        console.print(f"🏷️  Labels: {', '.join(labels)}", style="green")
+                        console.print(f"💡 Explanation: {explanation}", style="dim")
+                        console.print(f"🎯 Confidence: {confidence:.2f}", style="cyan")
+                    else:
+                        print(f"\n📝 Task: {args.label_task}")
+                        print(f"🎯 Mode: {actual_mode}")
+                        print(f"🏷️  Labels: {', '.join(labels)}")
+                        print(f"💡 Explanation: {explanation}")
+                        print(f"🎯 Confidence: {confidence:.2f}")
+                else:
+                    log_error("❌ No labels suggested for the task")
+                    
+            except Exception as e:
+                log_error(f"❌ TaskSense error: {str(e)}")
+        else:
+            log_error("❌ TaskSense not available")
+        
+        return
 
     if args.project:
         project_names = [name.strip().lower() for name in args.project.split(",")]
@@ -1274,6 +1418,28 @@ def main(test_mode=False):
         task_logger.info(f"Processing {len(tasks_to_process)}/{len(tasks)} tasks from projects: {[p['name'] for p in all_projects if p['id'] in project_ids]}")
         task_logger.info(f"Domain breakdown: {domain_count}")
 
+        # Determine TaskSense mode for this session
+        current_mode = None
+        if args.mode:
+            if args.mode == 'auto':
+                # Auto-detect mode based on time
+                if TASKSENSE_AVAILABLE:
+                    try:
+                        from task_sense_prompts import TaskSensePrompts
+                        prompts = TaskSensePrompts()
+                        current_mode = prompts.get_time_based_mode(tasksense_config)
+                        task_logger.info(f"TaskSense auto-detected mode: {current_mode}")
+                    except Exception as e:
+                        task_logger.warning(f"Failed to auto-detect mode: {e}, using default")
+                        current_mode = None
+            else:
+                current_mode = args.mode
+                task_logger.info(f"TaskSense mode set to: {current_mode}")
+        
+        # Add mode to session info
+        if current_mode:
+            log_info(f"🎯 TaskSense mode: {current_mode}")
+
         for task in tasks_to_process:
             if args.verbose:
                 log_info(f"📋 Processing: {task['content'][:50]}{'...' if len(task['content']) > 50 else ''}")
@@ -1281,7 +1447,7 @@ def main(test_mode=False):
             content = task['content']
             
             # Apply rule-based labeling with GPT fallback to ALL tasks
-            rule_labels, applied_rules = apply_rules_to_task(task, rules, gpt_fallback, task_logger)
+            rule_labels, applied_rules = apply_rules_to_task(task, rules, gpt_fallback, task_logger, current_mode, tasksense_config)
             
             # Check if task contains any links for URL processing
             has_any_link = re.search(r'https?://\S+', content)
