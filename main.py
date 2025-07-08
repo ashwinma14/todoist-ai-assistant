@@ -16,6 +16,13 @@ try:
 except Exception:
     OPENAI_AVAILABLE = False
 
+# TaskSense AI Engine import
+try:
+    from task_sense import TaskSense
+    TASKSENSE_AVAILABLE = True
+except ImportError:
+    TASKSENSE_AVAILABLE = False
+
 # Try to import rich for colored output, fallback to regular print
 try:
     from rich.console import Console
@@ -292,7 +299,7 @@ def evaluate_rule(rule, task_content):
 
 
 def apply_rules_to_task(task, rules, gpt_fallback=None, task_logger=None):
-    """Apply all matching rules to a task and return labels to add, with GPT fallback"""
+    """Apply all matching rules to a task and return labels to add, with TaskSense and GPT fallback"""
     content = task['content']
     task_id = task['id']
     labels_to_add = []
@@ -318,22 +325,56 @@ def apply_rules_to_task(task, rules, gpt_fallback=None, task_logger=None):
                     matcher_desc = get_rule_description(rule)
                     task_logger.info(f"Task {task_id} | RULE_MATCH: Rule {i} matched ({matcher_desc}) → #{label}")
     
-    # If no rules matched and GPT fallback is enabled, try GPT
+    # If no rules matched and AI fallback is enabled, try TaskSense first, then GPT
     if not labels_to_add and gpt_fallback and gpt_fallback.get('enabled'):
-        gpt_labels = get_gpt_labels(content, gpt_fallback, task_logger, task_id)
-        if gpt_labels:
-            labels_to_add.extend(gpt_labels)
-            for label in gpt_labels:
-                rule_info = {
-                    "label": label,
-                    "matcher": "gpt",
-                    "create_if_missing": gpt_fallback.get("create_if_missing", False),
-                    "source": "gpt"
-                }
-                applied_rules.append(rule_info)
+        # Try TaskSense first if available
+        if TASKSENSE_AVAILABLE:
+            try:
+                task_sense = TaskSense()
+                result = task_sense.label(content, dry_run=False)
                 
+                if result and result.get('labels'):
+                    tasksense_labels = result['labels']
+                    labels_to_add.extend(tasksense_labels)
+                    
+                    for label in tasksense_labels:
+                        rule_info = {
+                            "label": label,
+                            "matcher": "tasksense",
+                            "create_if_missing": gpt_fallback.get("create_if_missing", False),
+                            "source": "tasksense",
+                            "explanation": result.get('explanation', ''),
+                            "confidence": result.get('confidence', 0.8),
+                            "engine_meta": result.get('engine_meta', {})
+                        }
+                        applied_rules.append(rule_info)
+                        
+                        if task_logger:
+                            explanation = result.get('explanation', '')
+                            confidence = result.get('confidence', 0.8)
+                            version = result.get('engine_meta', {}).get('version', 'unknown')
+                            task_logger.info(f"Task {task_id} | TASKSENSE_MATCH: TaskSense ({version}) suggested label → #{label} (confidence: {confidence:.2f}) | {explanation}")
+                            
+            except Exception as e:
                 if task_logger:
-                    task_logger.info(f"Task {task_id} | GPT_MATCH: GPT suggested label → #{label}")
+                    task_logger.warning(f"Task {task_id} | TASKSENSE_ERROR: {str(e)}, falling back to GPT")
+        
+        # Fallback to original GPT if TaskSense failed or unavailable
+        if not labels_to_add:
+            gpt_labels = get_gpt_labels(content, gpt_fallback, task_logger, task_id)
+            if gpt_labels:
+                labels_to_add.extend(gpt_labels)
+                for label in gpt_labels:
+                    rule_info = {
+                        "label": label,
+                        "matcher": "gpt",
+                        "create_if_missing": gpt_fallback.get("create_if_missing", False),
+                        "source": "gpt"
+                    }
+                    applied_rules.append(rule_info)
+                    
+                    if task_logger:
+                        task_logger.info(f"Task {task_id} | GPT_MATCH: GPT suggested label → #{label}")
     
     return labels_to_add, applied_rules
 
