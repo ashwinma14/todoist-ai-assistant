@@ -113,7 +113,7 @@ class TaskSense:
             return self._get_dry_run_response(task_content, available_labels, mode)
         
         # Handle mock mode for testing
-        if os.environ.get('GPT_MOCK_MODE'):
+        if os.environ.get('GPT_MOCK_MODE') or self.config.get("mock_mode", {}).get("enabled", False):
             return self._get_mock_response(task_content, available_labels, mode)
         
         # Attempt GPT labeling
@@ -294,7 +294,45 @@ Please respond with one or two relevant labels from the available labels list.""
         """Generate mock response for testing."""
         content_lower = task_content.lower()
         
-        # Simple heuristics for mock responses
+        # Check for config-based mock responses
+        mock_config = self.config.get("mock_mode", {})
+        mock_responses = mock_config.get("responses", {})
+        
+        # Check patterns from config
+        if "patterns" in mock_responses:
+            for pattern, response in mock_responses["patterns"].items():
+                if pattern in content_lower:
+                    return {
+                        "labels": response["labels"],
+                        "explanation": response["explanation"],
+                        "confidence": response["confidence"],
+                        "source": "TaskSense_Mock_Config",
+                        "engine_meta": {
+                            "version": self.version,
+                            "reasoning_level": self.config.get("reasoning_level", "light"),
+                            "model": "mock",
+                            "mode": mode,
+                            "pattern_matched": pattern
+                        }
+                    }
+        
+        # Use default response from config or fallback heuristics
+        if "default" in mock_responses:
+            default_response = mock_responses["default"]
+            return {
+                "labels": default_response["labels"],
+                "explanation": default_response["explanation"],
+                "confidence": default_response["confidence"],
+                "source": "TaskSense_Mock_Default",
+                "engine_meta": {
+                    "version": self.version,
+                    "reasoning_level": self.config.get("reasoning_level", "light"),
+                    "model": "mock",
+                    "mode": mode
+                }
+            }
+        
+        # Fallback heuristics if no config
         if any(word in content_lower for word in ['clean', 'organize', 'house', 'home', 'garage']):
             labels = ['home']
             explanation = "Task involves home maintenance and organization"
@@ -315,7 +353,7 @@ Please respond with one or two relevant labels from the available labels list.""
             "labels": labels,
             "explanation": explanation,
             "confidence": 0.8,
-            "source": "TaskSense_Mock",
+            "source": "TaskSense_Mock_Heuristic",
             "engine_meta": {
                 "version": self.version,
                 "reasoning_level": self.config.get("reasoning_level", "light"),
