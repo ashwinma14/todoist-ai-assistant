@@ -23,6 +23,13 @@ try:
 except ImportError:
     TASKSENSE_AVAILABLE = False
 
+# LabelingPipeline import
+try:
+    from labeling_pipeline import LabelingPipeline, PipelineFactory
+    PIPELINE_AVAILABLE = True
+except ImportError:
+    PIPELINE_AVAILABLE = False
+
 # Try to import rich for colored output, fallback to regular print
 try:
     from rich.console import Console
@@ -742,6 +749,37 @@ def log_task_action(task_logger, task_id, task_content, action, **kwargs):
     if 'rule_source' in kwargs and kwargs['rule_source']:
         log_parts.append(f"Rule: {kwargs['rule_source']}")
     
+    # Add TaskSense-specific structured output
+    if 'tasksense_data' in kwargs and kwargs['tasksense_data']:
+        ts_data = kwargs['tasksense_data']
+        
+        # Add confidence scores
+        if 'confidence_scores' in ts_data:
+            scores = ts_data['confidence_scores']
+            if scores:
+                score_strs = [f"{label}:{score:.2f}" for label, score in scores.items()]
+                log_parts.append(f"Confidence: {{{', '.join(score_strs)}}}")
+        
+        # Add explanations
+        if 'explanations' in ts_data:
+            explanations = ts_data['explanations']
+            if explanations:
+                # Log detailed explanations separately for readability
+                for label, explanation in explanations.items():
+                    log_parts.append(f"Explanation[{label}]: {explanation}")
+        
+        # Add processing time
+        if 'processing_time' in ts_data:
+            log_parts.append(f"ProcessingTime: {ts_data['processing_time']:.3f}s")
+        
+        # Add mode information
+        if 'mode' in ts_data:
+            log_parts.append(f"Mode: {ts_data['mode']}")
+        
+        # Add version tracking
+        if 'version' in ts_data:
+            log_parts.append(f"Version: {ts_data['version']}")
+    
     log_message = " | ".join(log_parts)
     task_logger.info(log_message)
 
@@ -1209,6 +1247,8 @@ def main(test_mode=False):
                         help="Set TaskSense mode (personal, work, weekend, evening, auto)")
     parser.add_argument("--label-task", type=str, help="Label a single task and exit (requires --mode)")
     parser.add_argument("--tasksense-mock", action="store_true", help="Enable TaskSense mock mode for testing")
+    parser.add_argument("--confidence-threshold", type=float, help="Minimum confidence threshold for label acceptance (0.0-1.0)")
+    parser.add_argument("--soft-matching", action="store_true", help="Enable soft matching for labels not in available_labels")
     args, _ = parser.parse_known_args()
     
     # Load unified configuration (CLI flags → env vars → task_sense_config → rules.json fallback)
@@ -1440,86 +1480,211 @@ def main(test_mode=False):
         if current_mode:
             log_info(f"🎯 TaskSense mode: {current_mode}")
 
-        for task in tasks_to_process:
-            if args.verbose:
-                log_info(f"📋 Processing: {task['content'][:50]}{'...' if len(task['content']) > 50 else ''}")
+        # Create labeling pipeline
+        if PIPELINE_AVAILABLE:
+            pipeline = PipelineFactory.create_from_config(
+                rules=rules,
+                gpt_fallback=gpt_fallback,
+                tasksense_config=tasksense_config,
+                cli_args=args,
+                logger=task_logger
+            )
             
-            content = task['content']
+            log_info(f"📋 Using LabelingPipeline for task processing")
             
-            # Apply rule-based labeling with GPT fallback to ALL tasks
-            rule_labels, applied_rules = apply_rules_to_task(task, rules, gpt_fallback, task_logger, current_mode, tasksense_config)
-            
-            # Check if task contains any links for URL processing
-            has_any_link = re.search(r'https?://\S+', content)
-            
-            # Collect domain labels from URLs (if any)
-            domain_labels = set()
-            if has_any_link:
-                urls = extract_all_urls(content)
-                
+            # Process tasks using pipeline
+            pipeline_results = []
+            for task in tasks_to_process:
                 if args.verbose:
-                    url_count = len(urls)
-                    log_info(f"🔗 Found {url_count} URL{'s' if url_count != 1 else ''} in task")
+                    log_info(f"📋 Processing: {task['content'][:50]}{'...' if len(task['content']) > 50 else ''}")
                 
-                for url_info in urls:
-                    domain_label = get_domain_label(url_info['url'])
-                    if domain_label:
-                        domain_labels.add(domain_label)
-            
-            # Combine all labels (rule-based/GPT + domain-specific)
-            all_labels = set(rule_labels) | domain_labels
-            
-            # Apply labels if we have any
-            if all_labels:
-                existing_labels = task.get("labels", [])
-                new_labels = [label for label in all_labels if label not in existing_labels]
+                # Run pipeline
+                result = pipeline.run(task)
+                pipeline_results.append(result)
                 
-                # Handle label creation for rules that require it
-                for rule_info in applied_rules:
-                    if rule_info.get('create_if_missing', False) and rule_info['label'] in new_labels:
-                        if not args.dry_run:
-                            create_label_if_missing(rule_info['label'], task_logger)
-                
-                if new_labels:
-                    success = update_task(task, None, None, new_labels, summary, args.dry_run)
-                    if success:
-                        # Track labels for summary
-                        for label in new_labels:
-                            if label in domain_labels and label != 'link':
-                                summary.labeled(label)  # Domain-specific label
-                            else:
-                                summary.labeled()  # Rule-based or GPT label
-                        
-                        if args.verbose and not args.dry_run:
-                            log_success(f"🏷️  Tagged task with labels: {new_labels}")
-                        
-                        # Log the labeling action
-                        action = "LABELED_DRY_RUN" if args.dry_run else "LABELED"
-                        first_url = urls[0]['url'] if has_any_link and 'urls' in locals() else None
-                        label_sources = [rule['source'] for rule in applied_rules if rule['label'] in new_labels]
-                        log_task_action(task_logger, task['id'], task['content'], action, 
-                                      labels=new_labels, url=first_url, source=','.join(set(label_sources)))
-                    else:
-                        log_task_action(task_logger, task['id'], task['content'], "FAILED",
-                                      error="Failed to apply labels")
+                # Update summary based on pipeline results
+                if result.success and result.labels_applied:
+                    # Track labels for summary
+                    for label in result.labels_applied:
+                        if label in result.domain_labels and label != 'link':
+                            summary.labeled(label)  # Domain-specific label
+                        else:
+                            summary.labeled()  # Rule-based or GPT label
+                    
+                    if args.verbose and not args.dry_run:
+                        log_success(f"🏷️  Tagged task with labels: {result.labels_applied}")
+                    
+                    # Enhanced logging with TaskSense data
+                    action = "LABELED_DRY_RUN" if args.dry_run else "LABELED"
+                    first_url = result.urls_found[0]['url'] if result.urls_found else None
+                    label_sources = result.get_label_sources()
+                    
+                    # Prepare TaskSense data for logging
+                    tasksense_data = {
+                        'confidence_scores': result.confidence_scores,
+                        'explanations': result.explanations,
+                        'processing_time': result.processing_time,
+                        'mode': current_mode,
+                        'version': 'pipeline_v1.0'
+                    }
+                    
+                    log_task_action(task_logger, task['id'], task['content'], action, 
+                                  labels=result.labels_applied, 
+                                  url=first_url, 
+                                  source=','.join(set(label_sources.values())),
+                                  tasksense_data=tasksense_data)
+                elif not result.success:
+                    # Log failure with TaskSense data
+                    tasksense_data = {
+                        'processing_time': result.processing_time,
+                        'mode': current_mode,
+                        'version': 'pipeline_v1.0'
+                    }
+                    log_task_action(task_logger, task['id'], task['content'], "FAILED",
+                                  error=result.error, tasksense_data=tasksense_data)
                 else:
-                    # Labels matched but no new labels to add
-                    log_task_action(task_logger, task['id'], task['content'], "LABELS_MATCHED_NO_NEW",
-                                  reason="all matching labels already exist")
-            else:
-                # No labels to apply
-                log_task_action(task_logger, task['id'], task['content'], "NO_LABELS",
-                              reason="no rules matched and no GPT suggestions")
+                    # Log no labels with TaskSense data
+                    tasksense_data = {
+                        'confidence_scores': result.confidence_scores,
+                        'explanations': result.explanations,
+                        'processing_time': result.processing_time,
+                        'mode': current_mode,
+                        'version': 'pipeline_v1.0'
+                    }
+                    
+                    if result.get_all_labels():
+                        log_task_action(task_logger, task['id'], task['content'], "LABELS_MATCHED_NO_NEW",
+                                      reason="all matching labels already exist", tasksense_data=tasksense_data)
+                    else:
+                        log_task_action(task_logger, task['id'], task['content'], "NO_LABELS",
+                                      reason="no rules matched and no GPT suggestions", tasksense_data=tasksense_data)
+                
+                # Handle section routing for this task
+                if result.sections_to_move and not args.dry_run:
+                    # Use the first matching rule's section (prioritize by rule order)
+                    section_info = result.sections_to_move[0]
+                    section_name = section_info['section_name']
+                    project_id = task.get('project_id')
+                    
+                    if project_id:
+                        # Get or create section
+                        section_id = None
+                        if section_info['create_if_missing']:
+                            section_id = create_section_if_missing(section_name, project_id, task_logger)
+                        else:
+                            sections = get_project_sections(project_id, task_logger)
+                            section_id = sections.get(section_name)
+                        
+                        # Move task to section
+                        if section_id:
+                            move_success = move_task_to_section(task['id'], section_id, task_logger)
+                            if move_success:
+                                if args.verbose:
+                                    log_success(f"📁 Moved task to section: {section_name}")
+                                log_task_action(task_logger, task['id'], task['content'], "MOVED_TO_SECTION",
+                                              section=section_name, rule_source=section_info['rule_source'])
+                            else:
+                                log_task_action(task_logger, task['id'], task['content'], "MOVE_FAILED",
+                                              error=f"Failed to move to section: {section_name}")
+                        else:
+                            log_task_action(task_logger, task['id'], task['content'], "SECTION_NOT_FOUND",
+                                          error=f"Section '{section_name}' not found or could not be created")
+                    else:
+                        log_task_action(task_logger, task['id'], task['content'], "NO_PROJECT_ID",
+                                      error="Cannot move task without project_id")
+            
+            # Show pipeline statistics
+            if args.verbose:
+                stats = pipeline.get_statistics()
+                log_info(f"📊 Pipeline stats: {stats['tasks_processed']} tasks, {stats['labels_applied']} labels applied")
+                if stats['tasksense_used'] > 0:
+                    log_info(f"🧠 TaskSense used for {stats['tasksense_used']} tasks")
+                if stats['confidence_filtered'] > 0:
+                    log_info(f"🎯 Filtered {stats['confidence_filtered']} labels due to low confidence")
+        else:
+            # Fallback to original processing if pipeline not available
+            log_warning("⚠️ LabelingPipeline not available, using legacy processing")
+            
+            for task in tasks_to_process:
+                if args.verbose:
+                    log_info(f"📋 Processing: {task['content'][:50]}{'...' if len(task['content']) > 50 else ''}")
+                
+                content = task['content']
+                
+                # Apply rule-based labeling with GPT fallback to ALL tasks
+                rule_labels, applied_rules = apply_rules_to_task(task, rules, gpt_fallback, task_logger, current_mode, tasksense_config)
+                
+                # Check if task contains any links for URL processing
+                has_any_link = re.search(r'https?://\S+', content)
+                
+                # Collect domain labels from URLs (if any)
+                domain_labels = set()
+                if has_any_link:
+                    urls = extract_all_urls(content)
+                    
+                    if args.verbose:
+                        url_count = len(urls)
+                        log_info(f"🔗 Found {url_count} URL{'s' if url_count != 1 else ''} in task")
+                    
+                    for url_info in urls:
+                        domain_label = get_domain_label(url_info['url'])
+                        if domain_label:
+                            domain_labels.add(domain_label)
+                
+                # Combine all labels (rule-based/GPT + domain-specific)
+                all_labels = set(rule_labels) | domain_labels
+                
+                # Apply labels if we have any
+                if all_labels:
+                    existing_labels = task.get("labels", [])
+                    new_labels = [label for label in all_labels if label not in existing_labels]
+                    
+                    # Handle label creation for rules that require it
+                    for rule_info in applied_rules:
+                        if rule_info.get('create_if_missing', False) and rule_info['label'] in new_labels:
+                            if not args.dry_run:
+                                create_label_if_missing(rule_info['label'], task_logger)
+                    
+                    if new_labels:
+                        success = update_task(task, None, None, new_labels, summary, args.dry_run)
+                        if success:
+                            # Track labels for summary
+                            for label in new_labels:
+                                if label in domain_labels and label != 'link':
+                                    summary.labeled(label)  # Domain-specific label
+                                else:
+                                    summary.labeled()  # Rule-based or GPT label
+                            
+                            if args.verbose and not args.dry_run:
+                                log_success(f"🏷️  Tagged task with labels: {new_labels}")
+                            
+                            # Log the labeling action
+                            action = "LABELED_DRY_RUN" if args.dry_run else "LABELED"
+                            first_url = urls[0]['url'] if has_any_link and 'urls' in locals() else None
+                            label_sources = [rule['source'] for rule in applied_rules if rule['label'] in new_labels]
+                            log_task_action(task_logger, task['id'], task['content'], action, 
+                                          labels=new_labels, url=first_url, source=','.join(set(label_sources)))
+                        else:
+                            log_task_action(task_logger, task['id'], task['content'], "FAILED",
+                                          error="Failed to apply labels")
+                    else:
+                        # Labels matched but no new labels to add
+                        log_task_action(task_logger, task['id'], task['content'], "LABELS_MATCHED_NO_NEW",
+                                      reason="all matching labels already exist")
+                else:
+                    # No labels to apply
+                    log_task_action(task_logger, task['id'], task['content'], "NO_LABELS",
+                                  reason="no rules matched and no GPT suggestions")
 
-            # Handle section routing for matching rules
-            sections_to_move = []
-            for rule_info in applied_rules:
-                if rule_info.get('move_to') and rule_info.get('source') == 'rule':
-                    sections_to_move.append({
-                        'section_name': rule_info['move_to'],
-                        'create_if_missing': rule_info.get('create_if_missing', False),
-                        'rule_source': rule_info.get('matcher', 'unknown')
-                    })
+                # Handle section routing for matching rules
+                sections_to_move = []
+                for rule_info in applied_rules:
+                    if rule_info.get('move_to') and rule_info.get('source') == 'rule':
+                        sections_to_move.append({
+                            'section_name': rule_info['move_to'],
+                            'create_if_missing': rule_info.get('create_if_missing', False),
+                            'rule_source': rule_info.get('matcher', 'unknown')
+                        })
             
             # Move to section if specified in rules
             if sections_to_move and not args.dry_run:
