@@ -451,6 +451,121 @@ MIT License. See `LICENSE` for details.
 
 ---
 
+## 🚀 Major Updates: TaskSense AI Integration
+
+The Todoist AI Assistant has undergone a complete transformation with three major phases of development, evolving from a simple rule-based processor into a sophisticated AI-powered productivity platform.
+
+### Phase 1: TaskSense AI Engine Integration
+
+#### 🧠 **New AI-Powered Task Labeling**
+- **TaskSense Engine**: Advanced AI labeling system that understands context and user preferences
+- **Intelligent Fallback Chain**: TaskSense → Rule-based matching → GPT fallback → Default labels
+- **Mode-Aware Processing**: Different behavior for work, personal, weekend, and evening contexts
+
+#### 🎯 **Smart Features**
+- **Context Understanding**: Analyzes task content with user profile awareness
+- **Confidence Scoring**: Each suggestion includes confidence levels (0.0-1.0)
+- **Detailed Explanations**: Provides reasoning behind each label suggestion
+- **Multi-Label Support**: Can suggest multiple relevant labels per task
+
+#### ⚙️ **Configuration System**
+- **`task_sense_config.json`**: Centralized configuration file with:
+  - User profile customization
+  - Available labels and descriptions
+  - Mode-specific preferences (work vs personal vs weekend)
+  - Time-based auto-detection rules
+  - API settings and fallback options
+
+#### 🔧 **Enhanced CLI**
+- **`--mode=work/personal/weekend/evening/auto`**: Set TaskSense processing mode
+- **`--label-task "task content" --mode=work`**: Label individual tasks
+- **`--tasksense-mock`**: Testing mode with mock responses
+- **Auto-detection**: Automatically detects appropriate mode based on time/day
+
+### Phase 2: Configuration Consolidation & Advanced Mode Switching
+
+#### 🔧 **Unified Configuration System**
+- **Configuration Hierarchy**: CLI flags → Environment variables → `task_sense_config.json` → `rules.json` fallback
+- **GPT Settings Migration**: Moved GPT fallback configuration from `rules.json` to `task_sense_config.json`
+- **Environment Overrides**: Support for `DISABLE_GPT_FALLBACK=true` and other env vars
+- **Backward Compatibility**: Maintains support for existing `rules.json` configurations
+
+#### 🎯 **Advanced Mode Switching**
+- **Time-Based Auto-Detection**: Automatically detects work/personal/weekend/evening modes based on:
+  - Current time of day
+  - Day of week (weekdays vs weekends)
+  - Configurable work hours and evening hours
+- **Manual Mode Override**: CLI flags override auto-detection
+- **Mode-Specific Prompts**: Tailored AI prompts for each mode context
+
+#### 🧪 **Advanced Testing Framework**
+- **TaskSense-Specific Mocks**: Independent of global `GPT_MOCK_MODE`
+- **Pattern-Based Mock Responses**: Configurable mock responses for different task types
+- **Fallback Chain Validation**: Tests TaskSense → rules → GPT → default progression
+- **Accuracy Validation**: 80%+ accuracy testing across all modes and reasoning levels
+
+### Phase 3: Pipeline Abstraction & Advanced Features
+
+#### 🏗️ **Modular Pipeline Architecture**
+- **LabelingPipeline Class**: Clean, testable pipeline with `task.run()` interface
+- **Stage Separation**: Distinct processing stages:
+  - TaskSense AI labeling
+  - Rule-based labeling
+  - Domain detection (URL analysis)
+  - Label consolidation & filtering
+  - Application & section routing
+- **Graceful Fallback**: Automatic fallback to legacy processing if pipeline unavailable
+
+#### 📊 **Advanced Analytics & Logging**
+- **Structured TaskSense Output**: Rich metadata in logging system with:
+  - Confidence scores per label
+  - Detailed explanations for suggestions
+  - Processing time tracking
+  - Version information
+- **Pipeline Statistics**: Comprehensive performance monitoring
+
+#### ⚙️ **Enhanced Configuration & CLI**
+- **Confidence Thresholds**: `--confidence-threshold 0.8` for label acceptance control
+- **Soft Matching Mode**: `--soft-matching` suggests labels outside available_labels
+- **Advanced Statistics**: Detailed pipeline performance reporting in verbose mode
+
+#### 🔮 **Future-Ready Features**
+- **Interactive Feedback Foundation**: Framework for user feedback loops
+- **Multi-Pass Processing Ready**: Architecture prepared for advanced label ranking
+- **Extensible Design**: Easy addition of new pipeline stages and features
+
+### 🌟 **Complete Feature Set**
+
+```bash
+# Basic TaskSense usage
+python main.py --mode=work
+
+# Advanced pipeline with confidence control
+python main.py --mode=auto --confidence-threshold 0.8 --verbose
+
+# Discover new labels with soft matching
+python main.py --soft-matching --dry-run
+
+# Label individual tasks
+python main.py --label-task "Schedule quarterly review" --mode=work
+
+# Test with mock responses
+python main.py --tasksense-mock --dry-run
+
+# Environment-based overrides
+DISABLE_GPT_FALLBACK=true python main.py --mode=work
+```
+
+### 📈 **Performance Benefits**
+- **Smarter labeling** with context awareness
+- **Personalized suggestions** based on user profile
+- **Time-aware processing** (work hours vs evenings vs weekends)
+- **Transparent reasoning** with explanations
+- **Reliable fallback** system ensuring consistent operation
+- **Production-ready** with comprehensive testing and monitoring
+
+---
+
 ## 🆕 Version History
 
 - **v1.0**: Smart Link Cleaner with URL processing  
@@ -458,3 +573,6 @@ MIT License. See `LICENSE` for details.
 - **v1.2**: GPT fallback labeling integration  
 - **v1.3**: Universal task labeling (not just links)  
 - **v2.0**: Smart Section Router with automatic organization ✨
+- **v3.0**: TaskSense AI Engine Integration (Phase 1)
+- **v3.1**: Configuration Consolidation & Advanced Mode Switching (Phase 2)
+- **v3.2**: Pipeline Abstraction & Advanced Features (Phase 3)
