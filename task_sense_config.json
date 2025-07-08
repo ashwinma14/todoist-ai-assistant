@@ -1,0 +1,71 @@
+{
+  "user_profile": "I'm a dad and a product manager. I value health, family, and creative work. I prioritize personal development and efficient task management.",
+  "available_labels": [
+    "work",
+    "personal", 
+    "urgent",
+    "followup",
+    "health",
+    "admin",
+    "home",
+    "family",
+    "meeting",
+    "reading",
+    "idea"
+  ],
+  "default_mode": "personal",
+  "reasoning_level": "light",
+  "fallback_to_rules": true,
+  "prompt_version": "v1.0",
+  "model": "gpt-3.5-turbo",
+  "confidence_threshold": 0.6,
+  "max_labels": 2,
+  "mode_settings": {
+    "work": {
+      "preferred_labels": ["work", "meeting", "urgent", "followup"],
+      "reasoning_level": "light"
+    },
+    "personal": {
+      "preferred_labels": ["personal", "health", "family", "home"],
+      "reasoning_level": "light"
+    },
+    "weekend": {
+      "preferred_labels": ["home", "personal", "family", "health"],
+      "reasoning_level": "light"
+    },
+    "evening": {
+      "preferred_labels": ["personal", "admin", "home", "family"],
+      "reasoning_level": "light"
+    }
+  },
+  "label_descriptions": {
+    "work": "Professional tasks, projects, and business activities",
+    "personal": "Individual activities, self-care, and personal development",
+    "urgent": "High-priority tasks requiring immediate attention",
+    "followup": "Tasks requiring follow-up communication or action",
+    "health": "Health-related appointments, exercise, and wellness",
+    "admin": "Administrative tasks, bills, paperwork, and bureaucracy",
+    "home": "House maintenance, cleaning, organization, and home projects",
+    "family": "Family-related activities, events, and responsibilities",
+    "meeting": "Scheduled meetings, calls, and appointments",
+    "reading": "Articles, books, documentation, and learning materials",
+    "idea": "Creative ideas, brainstorming, and future considerations"
+  },
+  "time_based_modes": {
+    "enabled": true,
+    "weekday_work_hours": [9, 17],
+    "evening_hours": [18, 22],
+    "weekend_days": [5, 6]
+  },
+  "api_settings": {
+    "timeout": 30,
+    "max_retries": 2,
+    "temperature": 0.3,
+    "max_tokens": 150
+  },
+  "logging": {
+    "log_explanations": true,
+    "log_confidence": true,
+    "log_mode_detection": true
+  }
+}
