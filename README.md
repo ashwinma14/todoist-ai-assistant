@@ -1,68 +1,95 @@
 # Todoist AI Assistant
 
-A powerful and intuitive task automation tool that transforms your [Todoist](https://todoist.com) task list into an organized, actionable workflow. Built on the **TaskSense AI Engine**, it understands your personal context, labels and organizes your tasks, and helps you focus on what matters.
+The Todoist AI Assistant is an intelligent, context-aware automation system that transforms your [Todoist](https://todoist.com) into a clean, actionable workspace. Powered by the **TaskSense AI Engine**, it labels and organizes your tasks, adapts to your personal work patterns, and helps you focus on what matters most — all while maintaining transparency, configurability, and reliability.
 
 ---
 
-## 🧠 TaskSense AI Engine Highlights
+## 🧠 What It Does
 
-- **Context-Aware Labeling**: Personalized labels based on your user profile and mode (work, weekend, etc.)
-- **Confidence-Scored Suggestions**: Every label includes a confidence score for transparency
-- **Reasoning Levels**: Choose minimal (labels), light (explanation), or deep (rationale + confidence)
-- **Soft Matching Mode**: Suggests new labels outside your set, logged for review
-- **Mode Awareness**: Time-aware and CLI-controllable (work, personal, weekend, evening)
-- **Version Metadata**: Logs include `TaskSense` version, prompt version, and model used
-- **Feedback Hooks**: Logs low-confidence/soft matches for future correction
-- **Cost-Aware Ready**: Supports caching and rate-limit mitigation (planned)
+### Smart Task Labeling
+
+- Understands task content in the context of your **user profile** and **current mode** (work, personal, weekend, etc.)
+- Applies the most relevant labels with **confidence scores** and clear explanations
+- Supports **reasoning levels**: minimal (labels only), light (labels + explanation), deep (labels + explanation + rationale)
+- Offers **soft matching mode**, suggesting new labels outside your predefined set for later review
+
+### URL & Domain Awareness
+
+- Detects and formats URLs in tasks into clean, readable `[Title](URL)` links
+- Adds platform-specific labels for common services like GitHub, YouTube, Reddit, and more
+
+### Section Routing
+
+- Moves tasks into appropriate sections (e.g., Links, Meetings, Urgent) based on applied labels and rules
+- Respects existing `create_if_missing` and manual section setup
+
+### Rule & Fallback Logic
+
+- Processes tasks through a robust pipeline:
+  1. TaskSense AI Engine
+  2. Configurable Rule-Based Labeler (`rules.json`)
+  3. GPT fallback (if enabled)
+  4. Default label
+- Ensures graceful degradation even in case of network errors or API limits
+
+### Mode Awareness
+
+- Automatically adapts to the day of week and time of day (work hours, evenings, weekends)
+- CLI flags let you override or specify mode (`--mode=work`, `--mode=personal`, etc.)
 
 ---
 
-## 🚀 New Features (v3.x)
+## 🚀 Why Use It?
 
-### 🧩 Modular Pipeline
+✅ Personalized, context-aware task organization\
+✅ Transparent and trustworthy with clear explanations and logs\
+✅ Modular and extensible architecture, ready for advanced features\
+✅ Developer-friendly with mock modes, validation tools, and structured logging\
+✅ Backward compatible with your existing Todoist setup and rules
 
-- Clean separation: TaskSense → Rules → Domain Detection → Section Routing
-- Fallback chain with graceful degradation
+---
 
-### 📊 Enhanced Logging
+## 🧰 Key Components
 
-- Structured logs: confidence, explanation, source, version
-
-### 🧪 Testing & Validation
-
-- Mock mode: `--tasksense-mock` for isolated tests
-- `validate_config.py` script to check configs
-
-### ⚙️ Soft Matching Behavior
-
-- New labels not in `available_labels` are logged, not applied, and await user approval
+- **TaskSense AI Engine:** Core semantic engine responsible for intelligent labeling and reasoning
+- **Pipeline Architecture:** Modular stages for labeling, rules, domain detection, and section routing
+- **Unified Configuration:** Centralized `task_sense_config.json` plus optional overrides via CLI or env vars
+- **Testing & Validation:** Mock modes, regression tests, config validation script (`validate_config.py`)
+- **Logging:** Detailed, structured logs with explanations, confidence levels, and version metadata
 
 ---
 
 ## 📋 Example CLI Usage
 
 ```bash
-# Run in work mode
+# Process inbox in work mode
 python main.py --mode=work
 
-# Label a task with soft-matching
-python main.py --label-task "Fix daycare enrollment" --mode=personal --soft-matching
+# Label a specific task interactively
+python main.py --label-task "Schedule quarterly review" --mode=work
 
-# Auto-detect mode with confidence threshold
-python main.py --mode=auto --confidence-threshold 0.8
+# Run in soft-matching mode and log suggestions
+python main.py --mode=auto --soft-matching
 
-# Test pipeline integration
-python test_pipeline_integration.py
-
-# Validate config
+# Validate configuration
 python validate_config.py
 ```
 
 ---
 
-## 🧾 Feedback Workflow (Planned)
+## 📊 Example Output
 
-Logs highlight low-confidence and soft-matched labels for manual correction. Future versions will support user feedback loops.
+```text
+Task 123 | TaskSense: #personal (v1.3.2, light) | Confidence: 0.85 | Explanation: Daycare tour aligns with parenting goals
+```
+
+Soft-matched labels are logged and surfaced in the feedback workflow for later review.
+
+---
+
+## 🧾 Feedback & Continuous Improvement
+
+Low-confidence or soft-matched suggestions are logged for future correction. Feedback workflows and interactive correction interfaces are planned for future releases.
 
 ---
 
@@ -70,17 +97,7 @@ Logs highlight low-confidence and soft-matched labels for manual correction. Fut
 
 - **TaskSense Engine:** v1.3.2
 - **Pipeline:** v3.0.0
-- See `CHANGELOG.md` for details.
-
----
-
-## 🌟 Why Use It?
-
-✅ Modular, maintainable architecture\
-✅ Transparent explanations\
-✅ Context-sensitive modes\
-✅ Developer-friendly with mocks, tests, validation\
-✅ Future-ready for interactive feedback-driven features
+- See `CHANGELOG.md` for full history
 
 ---
 
@@ -93,3 +110,8 @@ MIT License. See `LICENSE` for details.
 ## 🙏 Acknowledgments
 
 - Enhanced with the Todoist API ecosystem
+
+---
+
+The Todoist AI Assistant turns your cluttered task list into a personalized, focused, and manageable system — so you can spend less time organizing and more time doing.
+
