@@ -284,8 +284,9 @@ def load_unified_config(cli_args=None):
     tasksense_config = None
     
     # 1. Load TaskSense config (primary source)
+    config_path = os.getenv('TASK_SENSE_CONFIG_PATH', 'task_sense_config.json')
     try:
-        with open('task_sense_config.json', 'r') as f:
+        with open(config_path, 'r') as f:
             tasksense_config = json.load(f)
             
         # Extract GPT fallback from TaskSense config
@@ -296,15 +297,18 @@ def load_unified_config(cli_args=None):
             log_info(f"🤖 GPT fallback enabled using model: {gpt_fallback.get('model', 'gpt-3.5-turbo')}")
             
     except FileNotFoundError:
-        log_warning("⚠️ TaskSense config not found, falling back to rules.json")
+        log_warning(f"⚠️ TaskSense config not found at {config_path}, falling back to rules.json")
+        if os.path.exists('task_sense_config.example.json'):
+            log_info("💡 Copy task_sense_config.example.json to task_sense_config.json to customize TaskSense settings")
     except json.JSONDecodeError as e:
         log_error(f"❌ Invalid JSON in task_sense_config.json: {e}")
     except Exception as e:
         log_error(f"❌ Error loading TaskSense config: {e}")
     
     # 2. Load rules.json (for labeling rules and fallback GPT config)
+    rules_path = os.getenv('RULES_CONFIG_PATH', 'rules.json')
     try:
-        with open('rules.json', 'r') as f:
+        with open(rules_path, 'r') as f:
             rules_config = json.load(f)
             
         # Handle both old format (array) and new format (object with rules and gpt_fallback)
@@ -321,12 +325,14 @@ def load_unified_config(cli_args=None):
                 gpt_fallback = rules_config.get('gpt_fallback')
                 log_info("🤖 Using GPT fallback from rules.json")
                 
-        log_info(f"📋 Loaded {len(rules)} labeling rules from rules.json")
+        log_info(f"📋 Loaded {len(rules)} labeling rules from {rules_path}")
         
     except FileNotFoundError:
-        log_warning("⚠️ Rules file not found")
+        log_warning(f"⚠️ Rules file not found at {rules_path}")
+        if os.path.exists('rules.example.json'):
+            log_info("💡 Copy rules.example.json to rules.json to customize labeling rules")
     except json.JSONDecodeError as e:
-        log_error(f"❌ Invalid JSON in rules.json: {e}")
+        log_error(f"❌ Invalid JSON in {rules_path}: {e}")
     except Exception as e:
         log_error(f"❌ Error loading rules: {e}")
     
@@ -690,17 +696,171 @@ def create_section_if_missing(section_name, project_id, task_logger=None):
         return None
 
 
-def move_task_to_section(task_id, section_id, task_logger=None, task_content=None):
-    """Move a task to a specific section"""
+def create_section_sync_api(section_name, project_id, task_logger=None):
+    """Create a section using Sync API v9"""
+    import uuid
+    
     try:
-        # Include section_id and content to ensure API accepts the request
-        update_data = {
-            "section_id": int(section_id)
+        sync_url = "https://api.todoist.com/sync/v9/sync"
+        
+        # Create a command to add the section
+        temp_id = str(uuid.uuid4())
+        command = {
+            "type": "section_add",
+            "uuid": str(uuid.uuid4()),
+            "temp_id": temp_id,
+            "args": {
+                "name": section_name,
+                "project_id": project_id
+            }
         }
         
-        # Include content to ensure at least one supported field is set
-        if task_content:
-            update_data["content"] = task_content
+        sync_data = {
+            "commands": [command]
+        }
+        
+        if task_logger:
+            task_logger.info(f"SYNC_SECTION_REQUEST: URL={sync_url}, command={command}")
+        
+        headers = {"Authorization": f"Bearer {os.environ['TODOIST_API_TOKEN'].strip()}",
+                  "Content-Type": "application/json"}
+        response = requests.post(sync_url, json=sync_data, headers=headers)
+        
+        if task_logger:
+            task_logger.info(f"SYNC_SECTION_RESPONSE: status={response.status_code}, content={response.text}")
+        
+        if response.status_code == 200:
+            result = response.json()
+            
+            # Check if the command was successful
+            command_uuid = command["uuid"]
+            if result.get("sync_status", {}).get(command_uuid) == "ok":
+                # Get the temp_id mapping to find the real section ID
+                temp_id = command.get("temp_id")
+                if temp_id and temp_id in result.get("temp_id_mapping", {}):
+                    section_id = result["temp_id_mapping"][temp_id]
+                    if task_logger:
+                        task_logger.info(f"SECTION_CREATED_SYNC: Section '{section_name}' created with ID {section_id}")
+                    return section_id
+                else:
+                    # Try to fetch the section by name to get its ID
+                    sections = get_project_sections(project_id, task_logger)
+                    if section_name in sections:
+                        if task_logger:
+                            task_logger.info(f"SECTION_CREATED_SYNC: Section '{section_name}' created, retrieved ID {sections[section_name]}")
+                        return sections[section_name]
+            else:
+                if task_logger:
+                    task_logger.error(f"SYNC_SECTION_FAILED: Command failed with status: {result.get('sync_status', {}).get(command_uuid)}")
+                return None
+        else:
+            if task_logger:
+                task_logger.error(f"SYNC_SECTION_ERROR: HTTP {response.status_code} - {response.text}")
+            return None
+            
+    except Exception as e:
+        if task_logger:
+            task_logger.error(f"SYNC_SECTION_EXCEPTION: Error creating section '{section_name}': {e}")
+        return None
+
+
+def create_section_if_missing_sync(section_name, project_id, task_logger=None):
+    """Create a section if it doesn't exist using Sync API, return section_id"""
+    try:
+        # First check if section already exists
+        sections = get_project_sections(project_id, task_logger)
+        if section_name in sections:
+            return sections[section_name]
+        
+        # Create new section using Sync API
+        return create_section_sync_api(section_name, project_id, task_logger)
+            
+    except Exception as e:
+        if task_logger:
+            task_logger.error(f"SECTION_CREATE_ERROR: Error creating section '{section_name}': {e}")
+        log_warning(f"Failed to create section {section_name}: {e}")
+        return None
+
+
+def move_task_to_section_sync_api(task_id, section_id, task_logger=None):
+    """Move a task to a specific section using Sync API v9"""
+    import uuid
+    
+    try:
+        # Use Sync API v9 for task movement
+        sync_url = "https://api.todoist.com/sync/v9/sync"
+        
+        # Create a command to move the task
+        command = {
+            "type": "item_move",
+            "uuid": str(uuid.uuid4()),
+            "args": {
+                "id": task_id,
+                "section_id": section_id
+            }
+        }
+        
+        sync_data = {
+            "commands": [command]
+        }
+        
+        if task_logger:
+            task_logger.info(f"SYNC_MOVE_REQUEST: URL={sync_url}, command={command}")
+        
+        response = requests.post(sync_url, headers=HEADERS, json=sync_data)
+        
+        if task_logger:
+            task_logger.info(f"SYNC_MOVE_RESPONSE: status={response.status_code}, content={response.text[:300]}")
+        
+        if response.status_code == 200:
+            response_data = response.json()
+            
+            # Check if the command was successful
+            if "sync_status" in response_data:
+                command_uuid = command["uuid"]
+                if command_uuid in response_data["sync_status"] and response_data["sync_status"][command_uuid] == "ok":
+                    if task_logger:
+                        task_logger.info(f"TASK_MOVED_SYNC: Task {task_id} moved to section {section_id} via Sync API")
+                    return True
+                else:
+                    if task_logger:
+                        task_logger.error(f"SYNC_MOVE_FAILED: Command failed - {response_data.get('sync_status', {}).get(command_uuid, 'unknown error')}")
+                    return False
+            else:
+                # If no sync_status, assume success if no error
+                if task_logger:
+                    task_logger.info(f"TASK_MOVED_SYNC: Task {task_id} moved to section {section_id} via Sync API (assumed success)")
+                return True
+        else:
+            if task_logger:
+                task_logger.error(f"SYNC_MOVE_FAILED: HTTP {response.status_code} - {response.text[:200]}")
+            return False
+            
+    except Exception as e:
+        if task_logger:
+            task_logger.error(f"SYNC_MOVE_ERROR: Error moving task {task_id} to section {section_id}: {e}")
+        log_warning(f"Failed to move task {task_id} to section via Sync API: {e}")
+        return False
+
+
+def move_task_to_section(task_id, section_id, task_logger=None, task_content=None):
+    """Move a task to a specific section - tries Sync API first, then falls back to REST API"""
+    
+    # Try Sync API v9 first (more reliable for section moves)
+    success = move_task_to_section_sync_api(task_id, section_id, task_logger)
+    if success:
+        return True
+    
+    # Fallback to REST API v2 (for compatibility)
+    if task_logger:
+        task_logger.warning(f"Sync API move failed, trying REST API fallback for task {task_id}")
+    
+    try:
+        # Include current content to satisfy API requirements and section_id to move
+        update_data = {
+            "section_id": int(section_id),
+            "content": task_content
+        }
         url = f"{TODOIST_API}/tasks/{task_id}"
         
         if task_logger:
@@ -712,9 +872,24 @@ def move_task_to_section(task_id, section_id, task_logger=None, task_content=Non
             task_logger.info(f"TASK_MOVE_RESPONSE: status={response.status_code}, content={response.text[:200]}")
         
         if response.status_code in (200, 204):
-            if task_logger:
-                task_logger.info(f"TASK_MOVED: Task {task_id} moved to section {section_id}")
-            return True
+            # Verify the section was actually set by checking the response
+            try:
+                response_data = response.json()
+                actual_section_id = response_data.get('section_id')
+                expected_section_id = str(section_id)  # Compare as strings
+                
+                if actual_section_id == expected_section_id:
+                    if task_logger:
+                        task_logger.info(f"TASK_MOVED: Task {task_id} moved to section {section_id}")
+                    return True
+                else:
+                    if task_logger:
+                        task_logger.error(f"TASK_MOVE_FAILED: Task {task_id} section_id is {actual_section_id}, expected {expected_section_id}")
+                    return False
+            except Exception as e:
+                if task_logger:
+                    task_logger.error(f"TASK_MOVE_FAILED: Could not parse response for task {task_id}: {e}")
+                return False
         else:
             if task_logger:
                 task_logger.error(f"TASK_MOVE_FAILED: Failed to move task {task_id} to section {section_id} (HTTP {response.status_code})")
@@ -798,6 +973,8 @@ def log_task_action(task_logger, task_id, task_content, action, **kwargs):
     log_message = " | ".join(log_parts)
     task_logger.info(log_message)
 
+# Using REST API v2 for basic operations (projects, tasks, labels, sections)
+# Sync API v9 is used for task movement operations
 TODOIST_API = "https://api.todoist.com/rest/v2"
 
 # Check if API token is available
@@ -1585,7 +1762,7 @@ def main(test_mode=False):
                         # Get or create section
                         section_id = None
                         if section_info['create_if_missing']:
-                            section_id = create_section_if_missing(section_name, project_id, task_logger)
+                            section_id = create_section_if_missing_sync(section_name, project_id, task_logger)
                         else:
                             sections = get_project_sections(project_id, task_logger)
                             section_id = sections.get(section_name)
@@ -1720,7 +1897,7 @@ def main(test_mode=False):
                         # Get or create section
                         section_id = None
                         if section_info['create_if_missing']:
-                            section_id = create_section_if_missing(section_name, project_id, task_logger)
+                            section_id = create_section_if_missing_sync(section_name, project_id, task_logger)
                         else:
                             sections = get_project_sections(project_id, task_logger)
                             section_id = sections.get(section_name)
