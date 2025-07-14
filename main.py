@@ -782,9 +782,10 @@ def create_section_if_missing_sync(section_name, project_id, task_logger=None):
         return None
 
 
-def move_task_to_section_sync_api(task_id, section_id, task_logger=None):
-    """Move a task to a specific section using Sync API v9"""
+def move_task_to_section_sync_api(task_id, section_id, task_logger=None, bulk_mode=False):
+    """Move a task to a specific section using Sync API v9 with rate limiting"""
     import uuid
+    import time
     
     try:
         # Use Sync API v9 for task movement
@@ -806,6 +807,12 @@ def move_task_to_section_sync_api(task_id, section_id, task_logger=None):
         
         if task_logger:
             task_logger.info(f"SYNC_MOVE_REQUEST: URL={sync_url}, command={command}")
+        
+        # Add rate limiting delay - more aggressive in bulk mode
+        if bulk_mode:
+            time.sleep(2.0)  # 2 seconds for bulk processing
+        else:
+            time.sleep(1.0)  # 1 second for normal processing
         
         response = requests.post(sync_url, headers=HEADERS, json=sync_data)
         
@@ -831,6 +838,19 @@ def move_task_to_section_sync_api(task_id, section_id, task_logger=None):
                 if task_logger:
                     task_logger.info(f"TASK_MOVED_SYNC: Task {task_id} moved to section {section_id} via Sync API (assumed success)")
                 return True
+        elif response.status_code == 429:
+            # Rate limit hit - parse retry_after and log warning
+            try:
+                error_data = response.json()
+                retry_after = error_data.get('error_extra', {}).get('retry_after', 60)
+                if task_logger:
+                    task_logger.warning(f"SYNC_RATE_LIMITED: Hit rate limit, need to wait {retry_after} seconds. Falling back to REST API.")
+                # Don't sleep here - let it fall back to REST API immediately
+                return False
+            except:
+                if task_logger:
+                    task_logger.warning(f"SYNC_RATE_LIMITED: Hit rate limit (429), falling back to REST API")
+                return False
         else:
             if task_logger:
                 task_logger.error(f"SYNC_MOVE_FAILED: HTTP {response.status_code} - {response.text[:200]}")
@@ -843,11 +863,11 @@ def move_task_to_section_sync_api(task_id, section_id, task_logger=None):
         return False
 
 
-def move_task_to_section(task_id, section_id, task_logger=None, task_content=None):
+def move_task_to_section(task_id, section_id, task_logger=None, task_content=None, bulk_mode=False):
     """Move a task to a specific section - tries Sync API first, then falls back to REST API"""
     
     # Try Sync API v9 first (more reliable for section moves)
-    success = move_task_to_section_sync_api(task_id, section_id, task_logger)
+    success = move_task_to_section_sync_api(task_id, section_id, task_logger, bulk_mode)
     if success:
         return True
     
@@ -1441,6 +1461,7 @@ def main(test_mode=False):
     parser.add_argument("--tasksense-mock", action="store_true", help="Enable TaskSense mock mode for testing")
     parser.add_argument("--confidence-threshold", type=float, help="Minimum confidence threshold for label acceptance (0.0-1.0)")
     parser.add_argument("--soft-matching", action="store_true", help="Enable soft matching for labels not in available_labels")
+    parser.add_argument("--bulk-mode", action="store_true", help="Enable bulk processing mode with extra rate limiting for large task volumes")
     args, _ = parser.parse_known_args()
     
     # Load unified configuration (CLI flags → env vars → task_sense_config → rules.json fallback)
@@ -1686,8 +1707,13 @@ def main(test_mode=False):
             
             # Process tasks using pipeline
             pipeline_results = []
-            for task in tasks_to_process:
-                if args.verbose:
+            total_tasks = len(tasks_to_process)
+            
+            for i, task in enumerate(tasks_to_process, 1):
+                # Show progress for bulk processing
+                if total_tasks > 10:
+                    log_info(f"📋 Processing task {i}/{total_tasks}: {task['content'][:40]}{'...' if len(task['content']) > 40 else ''}")
+                elif args.verbose:
                     log_info(f"📋 Processing: {task['content'][:50]}{'...' if len(task['content']) > 50 else ''}")
                 
                 # Run pipeline
@@ -1769,7 +1795,7 @@ def main(test_mode=False):
                         
                         # Move task to section
                         if section_id:
-                            move_success = move_task_to_section(task['id'], section_id, task_logger, task['content'])
+                            move_success = move_task_to_section(task['id'], section_id, task_logger, task['content'], args.bulk_mode)
                             if move_success:
                                 if args.verbose:
                                     log_success(f"📁 Moved task to section: {section_name}")
@@ -1904,7 +1930,7 @@ def main(test_mode=False):
                         
                         # Move task to section
                         if section_id:
-                            move_success = move_task_to_section(task['id'], section_id, task_logger, task['content'])
+                            move_success = move_task_to_section(task['id'], section_id, task_logger, task['content'], args.bulk_mode)
                             if move_success:
                                 if args.verbose:
                                     log_success(f"📂 Moved task to section: {section_name}")
