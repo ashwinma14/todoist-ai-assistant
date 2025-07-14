@@ -1592,6 +1592,14 @@ def main(test_mode=False):
                     else:
                         log_task_action(task_logger, task['id'], task['content'], "NO_PROJECT_ID",
                                       error="Cannot move task without project_id")
+                elif result.sections_to_move and args.dry_run:
+                    # Log what would happen in dry run
+                    section_info = result.sections_to_move[0]
+                    section_name = section_info['section_name']
+                    if args.verbose:
+                        log_info(f"📂 Would move task to section: {section_name}", "cyan")
+                    log_task_action(task_logger, task['id'], task['content'], "WOULD_MOVE_TO_SECTION",
+                                  section=section_name, rule_source=section_info['rule_source'])
             
             # Show pipeline statistics
             if args.verbose:
@@ -1685,47 +1693,47 @@ def main(test_mode=False):
                             'create_if_missing': rule_info.get('create_if_missing', False),
                             'rule_source': rule_info.get('matcher', 'unknown')
                         })
-            
-            # Move to section if specified in rules
-            if sections_to_move and not args.dry_run:
-                # Use the first matching rule's section (prioritize by rule order)
-                section_info = sections_to_move[0]
-                section_name = section_info['section_name']
-                project_id = task.get('project_id')
                 
-                if project_id:
-                    # Get or create section
-                    section_id = None
-                    if section_info['create_if_missing']:
-                        section_id = create_section_if_missing(section_name, project_id, task_logger)
-                    else:
-                        sections = get_project_sections(project_id, task_logger)
-                        section_id = sections.get(section_name)
+                # Move to section if specified in rules
+                if sections_to_move and not args.dry_run:
+                    # Use the first matching rule's section (prioritize by rule order)
+                    section_info = sections_to_move[0]
+                    section_name = section_info['section_name']
+                    project_id = task.get('project_id')
                     
-                    # Move task to section
-                    if section_id:
-                        move_success = move_task_to_section(task['id'], section_id, task_logger)
-                        if move_success:
-                            if args.verbose:
-                                log_success(f"📂 Moved task to section: {section_name}")
-                            
-                            log_task_action(task_logger, task['id'], task['content'], "MOVED_TO_SECTION",
-                                          section=section_name, rule_source=section_info['rule_source'])
+                    if project_id:
+                        # Get or create section
+                        section_id = None
+                        if section_info['create_if_missing']:
+                            section_id = create_section_if_missing(section_name, project_id, task_logger)
                         else:
-                            log_task_action(task_logger, task['id'], task['content'], "MOVE_FAILED",
-                                          error=f"Failed to move to section {section_name}")
+                            sections = get_project_sections(project_id, task_logger)
+                            section_id = sections.get(section_name)
+                        
+                        # Move task to section
+                        if section_id:
+                            move_success = move_task_to_section(task['id'], section_id, task_logger)
+                            if move_success:
+                                if args.verbose:
+                                    log_success(f"📂 Moved task to section: {section_name}")
+                                
+                                log_task_action(task_logger, task['id'], task['content'], "MOVED_TO_SECTION",
+                                              section=section_name, rule_source=section_info['rule_source'])
+                            else:
+                                log_task_action(task_logger, task['id'], task['content'], "MOVE_FAILED",
+                                              error=f"Failed to move to section {section_name}")
+                        else:
+                            log_task_action(task_logger, task['id'], task['content'], "SECTION_NOT_FOUND",
+                                          reason=f"Section '{section_name}' not found and create_if_missing=False")
                     else:
-                        log_task_action(task_logger, task['id'], task['content'], "SECTION_NOT_FOUND",
-                                      reason=f"Section '{section_name}' not found and create_if_missing=False")
-                else:
-                    log_task_action(task_logger, task['id'], task['content'], "NO_PROJECT_ID",
-                                  reason="Cannot move to section without project_id")
-            elif sections_to_move and args.dry_run:
-                # Log what would happen in dry run
-                section_name = sections_to_move[0]['section_name']
-                log_info(f"📂 Would move task to section: {section_name}", "cyan")
-                log_task_action(task_logger, task['id'], task['content'], "WOULD_MOVE_TO_SECTION",
-                              section=section_name, rule_source=sections_to_move[0]['rule_source'])
+                        log_task_action(task_logger, task['id'], task['content'], "NO_PROJECT_ID",
+                                      reason="Cannot move to section without project_id")
+                elif sections_to_move and args.dry_run:
+                    # Log what would happen in dry run
+                    section_name = sections_to_move[0]['section_name']
+                    log_info(f"📂 Would move task to section: {section_name}", "cyan")
+                    log_task_action(task_logger, task['id'], task['content'], "WOULD_MOVE_TO_SECTION",
+                                  section=section_name, rule_source=sections_to_move[0]['rule_source'])
 
             # Separate URL processing for link formatting (independent of labeling)
             if has_any_link:
