@@ -690,11 +690,26 @@ def create_section_if_missing(section_name, project_id, task_logger=None):
         return None
 
 
-def move_task_to_section(task_id, section_id, task_logger=None):
+def move_task_to_section(task_id, section_id, task_logger=None, task_content=None):
     """Move a task to a specific section"""
     try:
-        update_data = {"section_id": section_id}
-        response = requests.post(f"{TODOIST_API}/tasks/{task_id}", headers=HEADERS, json=update_data)
+        # Include section_id and content to ensure API accepts the request
+        update_data = {
+            "section_id": int(section_id)
+        }
+        
+        # Include content to ensure at least one supported field is set
+        if task_content:
+            update_data["content"] = task_content
+        url = f"{TODOIST_API}/tasks/{task_id}"
+        
+        if task_logger:
+            task_logger.info(f"TASK_MOVE_REQUEST: URL={url}, data={update_data}")
+        
+        response = requests.post(url, headers=HEADERS, json=update_data)
+        
+        if task_logger:
+            task_logger.info(f"TASK_MOVE_RESPONSE: status={response.status_code}, content={response.text[:200]}")
         
         if response.status_code in (200, 204):
             if task_logger:
@@ -1577,7 +1592,7 @@ def main(test_mode=False):
                         
                         # Move task to section
                         if section_id:
-                            move_success = move_task_to_section(task['id'], section_id, task_logger)
+                            move_success = move_task_to_section(task['id'], section_id, task_logger, task['content'])
                             if move_success:
                                 if args.verbose:
                                     log_success(f"📁 Moved task to section: {section_name}")
@@ -1712,7 +1727,7 @@ def main(test_mode=False):
                         
                         # Move task to section
                         if section_id:
-                            move_success = move_task_to_section(task['id'], section_id, task_logger)
+                            move_success = move_task_to_section(task['id'], section_id, task_logger, task['content'])
                             if move_success:
                                 if args.verbose:
                                     log_success(f"📂 Moved task to section: {section_name}")
