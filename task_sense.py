@@ -461,3 +461,354 @@ Please respond with one or two relevant labels from the available labels list.""
                 "mode": mode
             }
         }
+    
+    # ==========================================
+    # PHASE 4: RANKING ENGINE IMPLEMENTATION
+    # ==========================================
+    
+    def calculate_priority_score(self, task: Dict[str, Any]) -> float:
+        """
+        Calculate priority score for a task.
+        
+        Args:
+            task: Task dictionary from Todoist API
+            
+        Returns:
+            float: Priority score (0.0-1.0)
+        """
+        priority = task.get('priority', 4)  # Default to lowest priority
+        priority_scores = self.ranking_config.get('priority_scores', {})
+        fallback_weights = self.ranking_config.get('fallback_weights', {})
+        
+        # Convert priority to string for lookup
+        priority_str = str(priority)
+        
+        if priority_str in priority_scores:
+            return priority_scores[priority_str]
+        else:
+            # Use fallback weight for missing priority
+            return fallback_weights.get('no_priority', 0.3)
+    
+    def calculate_due_date_score(self, task: Dict[str, Any]) -> float:
+        """
+        Calculate due date proximity score for a task.
+        
+        Args:
+            task: Task dictionary from Todoist API
+            
+        Returns:
+            float: Due date score (0.0-1.0)
+        """
+        from datetime import datetime, timezone
+        
+        due_info = task.get('due')
+        if not due_info or not due_info.get('date'):
+            # Use fallback weight for no due date
+            fallback_weights = self.ranking_config.get('fallback_weights', {})
+            return fallback_weights.get('no_due_date', 0.2)
+        
+        due_date_scores = self.ranking_config.get('due_date_scores', {})
+        
+        try:
+            # Parse due date
+            due_date_str = due_info['date']
+            if 'T' in due_date_str:
+                # Full datetime
+                due_date = datetime.fromisoformat(due_date_str.replace('Z', '+00:00'))
+            else:
+                # Date only - assume end of day
+                due_date = datetime.strptime(due_date_str, '%Y-%m-%d')
+                due_date = due_date.replace(hour=23, minute=59, second=59)
+            
+            # Get current time
+            now = datetime.now(timezone.utc)
+            if due_date.tzinfo is None:
+                due_date = due_date.replace(tzinfo=timezone.utc)
+            
+            # Calculate days difference
+            days_diff = (due_date - now).days
+            
+            if days_diff < 0:
+                return due_date_scores.get('overdue', 1.0)
+            elif days_diff == 0:
+                return due_date_scores.get('today', 0.9)
+            elif days_diff == 1:
+                return due_date_scores.get('tomorrow', 0.7)
+            elif days_diff <= 7:
+                return due_date_scores.get('this_week', 0.5)
+            else:
+                return due_date_scores.get('future', 0.2)
+                
+        except Exception as e:
+            self.logger.warning(f"Error parsing due date for task {task.get('id', 'unknown')}: {e}")
+            fallback_weights = self.ranking_config.get('fallback_weights', {})
+            return fallback_weights.get('no_due_date', 0.2)
+    
+    def calculate_age_score(self, task: Dict[str, Any]) -> float:
+        """
+        Calculate age score for a task (older tasks get slight boost).
+        
+        Args:
+            task: Task dictionary from Todoist API
+            
+        Returns:
+            float: Age score (0.0-1.0)
+        """
+        from datetime import datetime, timezone
+        
+        created_at = task.get('created_at')
+        if not created_at:
+            return 0.1  # Default for missing creation date
+        
+        try:
+            # Parse creation date
+            if isinstance(created_at, str):
+                created_date = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+            else:
+                created_date = created_at
+            
+            # Get current time
+            now = datetime.now(timezone.utc)
+            if created_date.tzinfo is None:
+                created_date = created_date.replace(tzinfo=timezone.utc)
+            
+            # Calculate days since creation
+            days_old = (now - created_date).days
+            
+            # Give slight boost to older tasks (0.0-1.0 scale)
+            # Cap at 30 days for reasonable range
+            age_score = min(days_old / 30.0, 1.0)
+            
+            return age_score
+            
+        except Exception as e:
+            self.logger.warning(f"Error parsing creation date for task {task.get('id', 'unknown')}: {e}")
+            return 0.1
+    
+    def calculate_label_preference_score(self, task: Dict[str, Any], mode: str) -> float:
+        """
+        Calculate label preference score based on mode-specific preferences.
+        
+        Args:
+            task: Task dictionary from Todoist API
+            mode: Current mode (work, personal, weekend, evening)
+            
+        Returns:
+            float: Label preference score (0.0-1.0)
+        """
+        task_labels = set(task.get('labels', []))
+        if not task_labels:
+            # Use fallback weight for no preferred labels
+            fallback_weights = self.ranking_config.get('fallback_weights', {})
+            return fallback_weights.get('no_preferred_labels', 0.1)
+        
+        mode_settings = self.ranking_config.get('mode_settings', {})
+        current_mode_settings = mode_settings.get(mode, {})
+        
+        preferred_labels = set(current_mode_settings.get('preferred_labels', []))
+        excluded_labels = set(current_mode_settings.get('excluded_labels', []))
+        
+        # Check for excluded labels (penalty)
+        if task_labels & excluded_labels:
+            return 0.0
+        
+        # Check for preferred labels (bonus)
+        preferred_matches = task_labels & preferred_labels
+        if preferred_matches:
+            # Score based on number of preferred label matches
+            return min(len(preferred_matches) * 0.4, 1.0)
+        
+        # Neutral score for non-preferred, non-excluded labels
+        return 0.5
+    
+    def calculate_composite_score(self, task: Dict[str, Any], mode: str, config_override: Optional[Dict] = None) -> Dict[str, Any]:
+        """
+        Calculate composite score for a task combining all scoring components.
+        
+        Args:
+            task: Task dictionary from Todoist API
+            mode: Current mode (work, personal, weekend, evening)
+            config_override: Optional config override
+            
+        Returns:
+            dict: Score result with components and explanation
+        """
+        # Use override config or default
+        config = config_override or self.ranking_config
+        
+        # Get mode-specific weights or fall back to default
+        mode_settings = config.get('mode_settings', {})
+        current_mode = mode_settings.get(mode, {})
+        weights = current_mode.get('weights') or config.get('scoring_weights', {})
+        
+        # Calculate individual component scores
+        priority_score = self.calculate_priority_score(task)
+        due_date_score = self.calculate_due_date_score(task)
+        age_score = self.calculate_age_score(task)
+        label_score = self.calculate_label_preference_score(task, mode)
+        
+        # Calculate weighted composite score
+        components = {
+            'priority': priority_score * weights.get('priority', 0.4),
+            'due_date': due_date_score * weights.get('due_date', 0.3),
+            'age': age_score * weights.get('age', 0.1),
+            'label_preference': label_score * weights.get('label_preference', 0.2)
+        }
+        
+        total_score = sum(components.values())
+        
+        # Generate explanation
+        explanations = []
+        if priority_score > 0.7:
+            explanations.append(f"high priority (p{task.get('priority', 4)})")
+        
+        due_info = task.get('due')
+        if due_info and due_date_score > 0.8:
+            explanations.append("due soon")
+        elif due_date_score == 1.0:
+            explanations.append("overdue")
+        
+        task_labels = task.get('labels', [])
+        if label_score > 0.5 and task_labels:
+            mode_settings = config.get('mode_settings', {})
+            preferred = mode_settings.get(mode, {}).get('preferred_labels', [])
+            matching_labels = [label for label in task_labels if label in preferred]
+            if matching_labels:
+                explanations.append(f"preferred labels: {', '.join(matching_labels)}")
+        
+        if age_score > 0.5:
+            explanations.append("older task")
+        
+        explanation = "; ".join(explanations) if explanations else "standard scoring"
+        
+        return {
+            'score': round(total_score, 3),
+            'components': components,
+            'explanation': explanation,
+            'raw_components': {
+                'priority': priority_score,
+                'due_date': due_date_score,
+                'age': age_score,
+                'label_preference': label_score
+            }
+        }
+    
+    def rank(self, tasks: List[Dict[str, Any]], mode: Optional[str] = None, limit: int = 3, config_override: Optional[Dict] = None) -> List[Dict[str, Any]]:
+        """
+        Rank tasks for daily focus selection using priority-based scoring.
+        
+        Args:
+            tasks: List of task dictionaries from Todoist API
+            mode: Override mode (work, personal, weekend, evening, auto)
+            limit: Maximum tasks to return (default: 3)
+            config_override: Override default ranking config
+            
+        Returns:
+            List of ranked tasks with scores and explanations:
+            [
+                {
+                    'task': {...},  # Original task dict
+                    'score': 0.85,
+                    'explanation': 'High priority work task due today',
+                    'components': {
+                        'priority': 0.4,
+                        'due_date': 0.3,
+                        'age': 0.05,
+                        'label_preference': 0.1
+                    }
+                }
+            ]
+        """
+        # Use override config or default
+        config = config_override or self.ranking_config
+        
+        # Determine mode
+        if mode is None:
+            mode = self.config.get('default_mode', 'personal')
+        elif mode == 'auto':
+            mode = self._detect_mode()
+        
+        # Filter to backlog tasks only (section_id == None)
+        filtering_config = config.get('filtering', {})
+        if filtering_config.get('backlog_only', True):
+            backlog_tasks = [task for task in tasks if task.get('section_id') is None]
+            if self.logger and filtering_config.get('log_candidates', True):
+                self.logger.info(f"RANK_FILTER: Filtered to {len(backlog_tasks)} backlog tasks from {len(tasks)} total")
+        else:
+            backlog_tasks = tasks
+        
+        if not backlog_tasks:
+            self.logger.info("RANK_NO_CANDIDATES: No backlog tasks found to rank")
+            return []
+        
+        # Score all tasks
+        scored_tasks = []
+        for task in backlog_tasks:
+            try:
+                score_result = self.calculate_composite_score(task, mode, config)
+                
+                scored_task = {
+                    'task': task,
+                    'score': score_result['score'],
+                    'explanation': score_result['explanation'],
+                    'components': score_result['components'],
+                    'raw_components': score_result['raw_components']
+                }
+                scored_tasks.append(scored_task)
+                
+                # Log candidate if verbose logging enabled
+                if config.get('logging', {}).get('log_candidates', True):
+                    task_id = task.get('id', 'unknown')
+                    task_content = task.get('content', 'No content')[:50]
+                    self.logger.info(f"RANK_CANDIDATES: Task {task_id} → Score: {score_result['score']} | Reason: {score_result['explanation']} | Content: {task_content}")
+                    
+            except Exception as e:
+                self.logger.error(f"Error scoring task {task.get('id', 'unknown')}: {e}")
+                continue
+        
+        # Sort by score (descending)
+        scored_tasks.sort(key=lambda x: x['score'], reverse=True)
+        
+        # Apply limit
+        ranked_tasks = scored_tasks[:limit]
+        
+        # Log ranking summary
+        if ranked_tasks:
+            self.logger.info(f"RANK_SUMMARY: Selected {len(ranked_tasks)} tasks from {len(scored_tasks)} candidates (mode: {mode})")
+            for i, ranked_task in enumerate(ranked_tasks, 1):
+                task_id = ranked_task['task'].get('id', 'unknown')
+                score = ranked_task['score']
+                explanation = ranked_task['explanation']
+                self.logger.info(f"RANK_TOP_{i}: Task {task_id} (score: {score}) - {explanation}")
+        else:
+            self.logger.info("RANK_EMPTY: No tasks qualified for ranking")
+        
+        return ranked_tasks
+    
+    def _detect_mode(self) -> str:
+        """
+        Auto-detect current mode based on time and day.
+        
+        Returns:
+            str: Detected mode (work, personal, weekend, evening)
+        """
+        from datetime import datetime
+        
+        now = datetime.now()
+        hour = now.hour
+        weekday = now.weekday()  # 0=Monday, 6=Sunday
+        
+        # Weekend detection
+        if weekday >= 5:  # Saturday, Sunday
+            return 'weekend'
+        
+        # Evening detection (6 PM - 10 PM)
+        if 18 <= hour <= 22:
+            return 'evening'
+        
+        # Work hours detection (9 AM - 5 PM on weekdays)
+        if 9 <= hour <= 17:
+            return 'work'
+        
+        # Default to personal for other times
+        return 'personal'
