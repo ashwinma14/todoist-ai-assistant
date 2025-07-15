@@ -344,7 +344,13 @@ class LabelingPipeline:
             # This ensures tasks with existing labels get routed even if no new labels were applied
             if not result.sections_to_move:  # Only if no routing from applied rules
                 existing_labels = set(task.get('labels', []))
-                if existing_labels:
+                current_section_id = task.get('section_id')
+                
+                # Only route tasks in the backlog (no section assigned)
+                if current_section_id is not None:
+                    if self.logger and existing_labels:
+                        self.logger.info(f"SECTION_SKIP: Task {task['id']} already in section (section_id: {current_section_id}), skipping universal routing")
+                elif existing_labels:
                     # Check each existing label against rules to find section routing candidates
                     for label in existing_labels:
                         for rule in self.rules:

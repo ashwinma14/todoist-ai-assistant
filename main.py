@@ -855,6 +855,13 @@ def route_task_to_section(task, rules, task_logger=None, dry_run=False, bulk_mod
     if not existing_labels:
         return True  # No labels to route
     
+    # Only route tasks in the backlog (no section assigned)
+    if current_section_id is not None:
+        if task_logger:
+            current_section_name = get_section_name_by_id(current_section_id, project_id, task_logger)
+            task_logger.info(f"SECTION_SKIP: Task {task['id']} already in section {current_section_name} (section_id: {current_section_id})")
+        return True  # Skip tasks that already have a section
+    
     # Use priority-based section selection
     selected_section = select_priority_section(existing_labels, rules, project_id, task_logger)
     
@@ -2115,8 +2122,11 @@ def main(test_mode=False):
             
             for task in tasks_to_process:
                 existing_labels = set(task.get('labels', []))
-                if existing_labels:
-                    # Route any task with existing labels to ensure proper section placement
+                current_section_id = task.get('section_id')
+                
+                # Only route backlog tasks (no section assigned) with labels
+                if existing_labels and current_section_id is None:
+                    # Route any backlog task with existing labels to ensure proper section placement
                     route_task_to_section(task, rules, task_logger, args.dry_run, args.bulk_mode, context="UNIVERSAL")
         else:
             # Fallback to original processing if pipeline not available
@@ -2383,8 +2393,11 @@ def main(test_mode=False):
             
             for task in tasks_to_process:
                 existing_labels = set(task.get('labels', []))
-                if existing_labels:
-                    # Route any task with existing labels to ensure proper section placement
+                current_section_id = task.get('section_id')
+                
+                # Only route backlog tasks (no section assigned) with labels
+                if existing_labels and current_section_id is None:
+                    # Route any backlog task with existing labels to ensure proper section placement
                     route_task_to_section(task, rules, task_logger, args.dry_run, args.bulk_mode, context="UNIVERSAL_LEGACY")
 
         # Save timestamp for next incremental run (only if not dry run and not test mode)
