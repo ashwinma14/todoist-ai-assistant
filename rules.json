@@ -4,55 +4,91 @@
       "match": "url",
       "label": "link",
       "move_to": "Links",
-      "create_if_missing": true
+      "create_if_missing": true,
+      "priority": 5
     },
     {
       "contains": ["follow up", "email", "reach out", "contact"],
       "label": "followup",
       "move_to": "Follow-ups",
-      "create_if_missing": false
+      "create_if_missing": false,
+      "priority": 3
     },
     {
       "prefix": "!",
       "label": "urgent",
       "move_to": "Urgent",
-      "create_if_missing": false
+      "create_if_missing": false,
+      "priority": 1
     },
     {
       "contains": ["meeting", "call", "zoom", "teams"],
       "label": "meeting",
       "move_to": "Meetings",
-      "create_if_missing": false
+      "create_if_missing": false,
+      "priority": 4
     },
     {
       "contains": ["buy", "purchase", "order", "shopping"],
       "label": "shopping",
       "move_to": "Shopping",
-      "create_if_missing": false
+      "create_if_missing": false,
+      "priority": 6
     },
     {
       "contains": ["read", "article", "book", "blog"],
       "label": "reading",
       "move_to": "Reading",
-      "create_if_missing": false
+      "create_if_missing": false,
+      "priority": 7
     },
     {
       "regex": "\\b(bug|fix|issue|error)\\b",
       "label": "bug",
       "move_to": "Issues",
-      "create_if_missing": false
+      "create_if_missing": false,
+      "priority": 2
     },
     {
-      "contains": ["idea", "brainstorm", "concept"],
+      "contains": ["idea", "brainstorm", "concept", "innovation", "creative"],
       "label": "idea",
       "move_to": "Ideas",
-      "create_if_missing": false
+      "create_if_missing": false,
+      "priority": 8
+    },
+    {
+      "contains": ["health", "workout", "run", "exercise", "fitness"],
+      "label": "health",
+      "move_to": "Health",
+      "create_if_missing": false,
+      "priority": 9
+    },
+    {
+      "contains": [
+        "daycare", "school", "parent", "mom", "dad", "child", "kids", "family", "home",
+        "groceries", "grocery", "doctor", "dentist", "appointment", "errand", "birthday",
+        "party", "house", "clean", "laundry", "meal", "cook", "shopping", "pet", "vet",
+        "car", "maintenance", "bill", "pay", "personal", "health", "fitness", "wellness",
+        "vacation", "trip", "travel", "holiday", "family time", "kids' activity", "pickup",
+        "dropoff", "school meeting", "teacher", "babysitter", "maya", "reyan", "dia"
+      ],
+      "label": "personal",
+      "move_to": "Personal",
+      "create_if_missing": true,
+      "priority": 11
+    },
+    {
+      "contains": ["deck", "presentation", "jira", "pull request", "customer", "stakeholder", "report", "project"],
+      "label": "work",
+      "move_to": "Work",
+      "create_if_missing": true,
+      "priority": 10
     }
   ],
   "gpt_fallback": {
     "enabled": true,
     "model": "gpt-3.5-turbo",
-    "base_prompt": "You are a productivity assistant. Assign the most relevant label to this Todoist task using one or two from this list: ['work', 'personal', 'admin', 'media', 'urgent', 'followup', 'home']",
-    "user_prompt_extension": "If it's a household chore, prefer 'home'."
+    "base_prompt": "You are a productivity assistant. Assign the most relevant label to this Todoist task using one or two from this list: ['work', 'personal', 'admin', 'media', 'urgent', 'followup', 'home', 'health', 'family', 'idea']",
+    "user_prompt_extension": "Only assign either 'work' or 'personal', but not both. If the task is about employment, business, or professional responsibilities, prefer 'work'. If the task relates to home, family, health, errands, or personal life, prefer 'personal'. For other contexts, use the most fitting single label."
   }
 }

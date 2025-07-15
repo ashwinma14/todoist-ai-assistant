@@ -727,6 +727,107 @@ def get_section_name_by_id(section_id, project_id, task_logger=None):
         return None
 
 
+def select_priority_section(task_labels, rules, project_id, task_logger=None):
+    """
+    Select the best section for a task based on label priorities and section availability.
+    
+    Args:
+        task_labels: Set of labels on the task
+        rules: List of rules from rules.json
+        project_id: Todoist project ID
+        task_logger: Logger instance
+    
+    Returns:
+        dict: Selected section info with reasoning, or None if no viable section
+        {
+            'section_name': str,
+            'create_if_missing': bool,
+            'priority': int,
+            'label': str,
+            'exists': bool,
+            'reason': str
+        }
+    """
+    if not task_labels:
+        return None
+    
+    # Collect all candidate sections from task labels
+    candidates = []
+    existing_sections = {}
+    
+    try:
+        # Get existing sections for this project
+        existing_sections = get_project_sections(project_id, task_logger)
+    except Exception as e:
+        if task_logger:
+            task_logger.error(f"PRIORITY_SECTION_ERROR: Failed to get project sections: {e}")
+        return None
+    
+    # Find all rules that match task labels and have move_to
+    for rule in rules:
+        rule_label = rule.get('label')
+        rule_move_to = rule.get('move_to')
+        
+        if rule_label and rule_move_to and rule_label in task_labels:
+            priority = rule.get('priority', 999)  # Default to low priority if not specified
+            create_if_missing = rule.get('create_if_missing', False)
+            section_exists = rule_move_to in existing_sections
+            
+            candidates.append({
+                'section_name': rule_move_to,
+                'create_if_missing': create_if_missing,
+                'priority': priority,
+                'label': rule_label,
+                'exists': section_exists,
+                'rule': rule
+            })
+    
+    if not candidates:
+        if task_logger:
+            task_logger.debug(f"PRIORITY_SECTION: No section candidates found for labels: {task_labels}")
+        return None
+    
+    # Sort candidates by priority (lower number = higher priority)
+    candidates.sort(key=lambda x: x['priority'])
+    
+    # Log all candidates for transparency
+    if task_logger:
+        candidate_info = []
+        for c in candidates:
+            status = "exists" if c['exists'] else ("create" if c['create_if_missing'] else "missing")
+            candidate_info.append(f"{c['label']}→{c['section_name']}(p:{c['priority']},{status})")
+        task_logger.info(f"SECTION_CANDIDATES: Found {len(candidates)} candidates: {', '.join(candidate_info)}")
+    
+    # Select best viable candidate
+    for candidate in candidates:
+        section_name = candidate['section_name']
+        exists = candidate['exists']
+        create_if_missing = candidate['create_if_missing']
+        
+        if exists:
+            # Section exists - this is our best choice
+            candidate['reason'] = f"highest priority existing section"
+            if task_logger:
+                task_logger.info(f"SECTION_SELECTED: Chose '{section_name}' (priority:{candidate['priority']}, exists:true)")
+            return candidate
+        elif create_if_missing:
+            # Section doesn't exist but can be created
+            candidate['reason'] = f"highest priority with create_if_missing=true"
+            if task_logger:
+                task_logger.info(f"SECTION_SELECTED: Chose '{section_name}' (priority:{candidate['priority']}, will_create:true)")
+            return candidate
+        else:
+            # Section doesn't exist and can't be created - skip
+            if task_logger:
+                task_logger.info(f"SECTION_SKIPPED: '{section_name}' (priority:{candidate['priority']}, missing, create_if_missing=false)")
+            continue
+    
+    # No viable candidates found
+    if task_logger:
+        task_logger.warning(f"SECTION_NO_VIABLE: No viable sections found from {len(candidates)} candidates")
+    return None
+
+
 def route_pre_labeled_task(task, rules, task_logger=None, dry_run=False, bulk_mode=False):
     """Handle section routing for tasks that already have labels (fix-sections mode)"""
     existing_labels = set(task.get('labels', []))
@@ -738,60 +839,65 @@ def route_pre_labeled_task(task, rules, task_logger=None, dry_run=False, bulk_mo
             task_logger.error(f"PRE_LABELED_ROUTE_ERROR: Task {task['id']} has no project_id")
         return False
     
-    # Check each existing label against rules to see if it needs routing
-    for label in existing_labels:
-        for rule in rules:
-            rule_label = rule.get('label')
-            rule_move_to = rule.get('move_to')
-            
-            if rule_label == label and rule_move_to:
-                # This label should be in a specific section
-                target_section_name = rule_move_to
-                current_section_name = get_section_name_by_id(current_section_id, project_id, task_logger)
-                
-                # Check if task needs to be moved
-                if current_section_name != target_section_name:
-                    if task_logger:
-                        task_logger.info(f"PRE_LABELED_ROUTE: Task {task['id']} with '{label}' label needs routing: '{current_section_name}' → '{target_section_name}'")
-                    
-                    if dry_run:
-                        if task_logger:
-                            task_logger.info(f"DRY_RUN: Would move task {task['id']} to section {target_section_name}")
-                        return True
-                    
-                    # Get or create target section
-                    section_id = None
-                    create_if_missing = rule.get('create_if_missing', False)
-                    
-                    if create_if_missing:
-                        section_id = create_section_if_missing_sync(target_section_name, project_id, task_logger)
-                    else:
-                        sections = get_project_sections(project_id, task_logger)
-                        section_id = sections.get(target_section_name)
-                    
-                    if section_id:
-                        # Check if already in target section (defensive check)
-                        if current_section_id == section_id:
-                            if task_logger:
-                                task_logger.info(f"PRE_LABELED_SKIP: Task {task['id']} already in target section {target_section_name}")
-                            return True
-                        
-                        # Move task to correct section
-                        move_success = move_task_to_section(task['id'], section_id, task_logger, task['content'], bulk_mode)
-                        if move_success:
-                            if task_logger:
-                                task_logger.info(f"PRE_LABELED_MOVED: Task {task['id']} moved to section {target_section_name}")
-                            return True
-                        else:
-                            if task_logger:
-                                task_logger.error(f"PRE_LABELED_MOVE_FAILED: Failed to move task {task['id']} to section {target_section_name}")
-                    else:
-                        if task_logger:
-                            task_logger.error(f"PRE_LABELED_SECTION_ERROR: Section {target_section_name} not found or could not be created")
-                    
-                    return False  # Only process first matching rule
+    if not existing_labels:
+        return True  # No labels to route
     
-    return True  # No routing needed
+    # Use priority-based section selection
+    selected_section = select_priority_section(existing_labels, rules, project_id, task_logger)
+    
+    if not selected_section:
+        if task_logger:
+            task_logger.debug(f"PRE_LABELED_NO_SECTION: Task {task['id']} has no viable section candidates")
+        return True  # No routing needed
+    
+    target_section_name = selected_section['section_name']
+    current_section_name = get_section_name_by_id(current_section_id, project_id, task_logger)
+    
+    # Check if task needs to be moved
+    if current_section_name == target_section_name:
+        if task_logger:
+            task_logger.info(f"PRE_LABELED_SKIP: Task {task['id']} already in target section '{target_section_name}' (reason: {selected_section['reason']})")
+        return True
+    
+    if task_logger:
+        task_logger.info(f"PRE_LABELED_ROUTE: Task {task['id']} with '{selected_section['label']}' label needs routing: '{current_section_name}' → '{target_section_name}' (reason: {selected_section['reason']})")
+    
+    if dry_run:
+        if task_logger:
+            task_logger.info(f"DRY_RUN: Would move task {task['id']} to section {target_section_name}")
+        return True
+    
+    # Get or create target section
+    section_id = None
+    create_if_missing = selected_section['create_if_missing']
+    
+    if create_if_missing:
+        section_id = create_section_if_missing_sync(target_section_name, project_id, task_logger)
+    else:
+        sections = get_project_sections(project_id, task_logger)
+        section_id = sections.get(target_section_name)
+    
+    if section_id:
+        # Check if already in target section (defensive check)
+        if current_section_id == section_id:
+            if task_logger:
+                task_logger.info(f"PRE_LABELED_SKIP: Task {task['id']} already in target section {target_section_name}")
+            return True
+        
+        # Move task to correct section
+        move_success = move_task_to_section(task['id'], section_id, task_logger, task['content'], bulk_mode)
+        if move_success:
+            if task_logger:
+                task_logger.info(f"PRE_LABELED_MOVED: Task {task['id']} moved to section {target_section_name} (priority:{selected_section['priority']})")
+            return True
+        else:
+            if task_logger:
+                task_logger.error(f"PRE_LABELED_MOVE_FAILED: Failed to move task {task['id']} to section {target_section_name}")
+            return False
+    else:
+        if task_logger:
+            task_logger.error(f"PRE_LABELED_SECTION_ERROR: Section {target_section_name} not found or could not be created")
+        return False
 
 
 def create_section_if_missing(section_name, project_id, task_logger=None):
@@ -1894,53 +2000,86 @@ def main(test_mode=False):
                         log_task_action(task_logger, task['id'], task['content'], "NO_LABELS",
                                       reason="no rules matched and no GPT suggestions", tasksense_data=tasksense_data)
                 
-                # Handle section routing for this task
+                # Handle section routing for this task using priority-based selection
                 if result.sections_to_move and not args.dry_run:
-                    # Use the first matching rule's section (prioritize by rule order)
-                    section_info = result.sections_to_move[0]
-                    section_name = section_info['section_name']
-                    project_id = task.get('project_id')
+                    # Extract labels from applied rules for priority selection
+                    task_labels = set()
+                    for rule_info in result.applied_rules:
+                        if rule_info.get('label'):
+                            task_labels.add(rule_info['label'])
                     
-                    if project_id:
-                        # Get or create section
-                        section_id = None
-                        if section_info['create_if_missing']:
-                            section_id = create_section_if_missing_sync(section_name, project_id, task_logger)
-                        else:
-                            sections = get_project_sections(project_id, task_logger)
-                            section_id = sections.get(section_name)
+                    project_id = task.get('project_id')
+                    if project_id and task_labels:
+                        # Use priority-based section selection
+                        selected_section = select_priority_section(task_labels, rules, project_id, task_logger)
                         
-                        # Move task to section
-                        if section_id:
-                            # Check if task is already in target section to avoid duplicate moves
-                            current_section = task.get('section_id')
-                            if current_section == section_id:
-                                if task_logger:
-                                    task_logger.info(f"SECTION_SKIP: Task {task['id']} already in target section {section_name}")
+                        if selected_section:
+                            section_name = selected_section['section_name']
+                            
+                            # Get or create section
+                            section_id = None
+                            if selected_section['create_if_missing']:
+                                section_id = create_section_if_missing_sync(section_name, project_id, task_logger)
                             else:
-                                move_success = move_task_to_section(task['id'], section_id, task_logger, task['content'], args.bulk_mode)
-                                if move_success:
-                                    if args.verbose:
-                                        log_success(f"📁 Moved task to section: {section_name}")
-                                    log_task_action(task_logger, task['id'], task['content'], "MOVED_TO_SECTION",
-                                                  section=section_name, rule_source=section_info['rule_source'])
+                                sections = get_project_sections(project_id, task_logger)
+                                section_id = sections.get(section_name)
+                            
+                            # Move task to section
+                            if section_id:
+                                # Check if task is already in target section to avoid duplicate moves
+                                current_section = task.get('section_id')
+                                if current_section == section_id:
+                                    if task_logger:
+                                        task_logger.info(f"SECTION_SKIP: Task {task['id']} already in target section {section_name}")
                                 else:
-                                    log_task_action(task_logger, task['id'], task['content'], "MOVE_FAILED",
-                                                  error=f"Failed to move to section: {section_name}")
+                                    move_success = move_task_to_section(task['id'], section_id, task_logger, task['content'], args.bulk_mode)
+                                    if move_success:
+                                        if args.verbose:
+                                            log_success(f"📁 Moved task to section: {section_name}")
+                                        log_task_action(task_logger, task['id'], task['content'], "MOVED_TO_SECTION",
+                                                      section=section_name, priority=selected_section['priority'], 
+                                                      rule_source=selected_section['label'])
+                                    else:
+                                        log_task_action(task_logger, task['id'], task['content'], "MOVE_FAILED",
+                                                      error=f"Failed to move to section: {section_name}")
+                            else:
+                                log_task_action(task_logger, task['id'], task['content'], "SECTION_NOT_FOUND",
+                                              error=f"Section '{section_name}' not found or could not be created")
                         else:
-                            log_task_action(task_logger, task['id'], task['content'], "SECTION_NOT_FOUND",
-                                          error=f"Section '{section_name}' not found or could not be created")
+                            log_task_action(task_logger, task['id'], task['content'], "NO_VIABLE_SECTION",
+                                          error="No viable section found from candidates")
                     else:
                         log_task_action(task_logger, task['id'], task['content'], "NO_PROJECT_ID",
                                       error="Cannot move task without project_id")
                 elif result.sections_to_move and args.dry_run:
-                    # Log what would happen in dry run
-                    section_info = result.sections_to_move[0]
-                    section_name = section_info['section_name']
-                    if args.verbose:
-                        log_info(f"📂 Would move task to section: {section_name}", "cyan")
-                    log_task_action(task_logger, task['id'], task['content'], "WOULD_MOVE_TO_SECTION",
-                                  section=section_name, rule_source=section_info['rule_source'])
+                    # Use priority-based section selection for dry run preview
+                    task_labels = set()
+                    for rule_info in result.applied_rules:
+                        if rule_info.get('label'):
+                            task_labels.add(rule_info['label'])
+                    
+                    project_id = task.get('project_id')
+                    if project_id and task_labels:
+                        selected_section = select_priority_section(task_labels, rules, project_id, task_logger)
+                        
+                        if selected_section:
+                            section_name = selected_section['section_name']
+                            if args.verbose:
+                                log_info(f"📂 Would move task to section: {section_name} (priority: {selected_section['priority']})", "cyan")
+                            log_task_action(task_logger, task['id'], task['content'], "WOULD_MOVE_TO_SECTION",
+                                          section=section_name, priority=selected_section['priority'], 
+                                          rule_source=selected_section['label'])
+                        else:
+                            log_task_action(task_logger, task['id'], task['content'], "NO_VIABLE_SECTION",
+                                          error="No viable section found from candidates")
+                    else:
+                        # Fallback to old behavior if no labels
+                        section_info = result.sections_to_move[0]
+                        section_name = section_info['section_name']
+                        if args.verbose:
+                            log_info(f"📂 Would move task to section: {section_name}", "cyan")
+                        log_task_action(task_logger, task['id'], task['content'], "WOULD_MOVE_TO_SECTION",
+                                      section=section_name, rule_source=section_info['rule_source'])
             
             # Show pipeline statistics
             if args.verbose:
@@ -2035,52 +2174,117 @@ def main(test_mode=False):
                             'rule_source': rule_info.get('matcher', 'unknown')
                         })
                 
-                # Move to section if specified in rules
+                # Move to section if specified in rules using priority-based selection
                 if sections_to_move and not args.dry_run:
-                    # Use the first matching rule's section (prioritize by rule order)
-                    section_info = sections_to_move[0]
-                    section_name = section_info['section_name']
-                    project_id = task.get('project_id')
+                    # Extract labels from applied rules for priority selection
+                    task_labels = set()
+                    for rule_info in applied_rules:
+                        if rule_info.get('label'):
+                            task_labels.add(rule_info['label'])
                     
-                    if project_id:
-                        # Get or create section
-                        section_id = None
-                        if section_info['create_if_missing']:
-                            section_id = create_section_if_missing_sync(section_name, project_id, task_logger)
-                        else:
-                            sections = get_project_sections(project_id, task_logger)
-                            section_id = sections.get(section_name)
+                    project_id = task.get('project_id')
+                    if project_id and task_labels:
+                        # Use priority-based section selection
+                        selected_section = select_priority_section(task_labels, rules, project_id, task_logger)
                         
-                        # Move task to section
-                        if section_id:
-                            # Check if task is already in target section to avoid duplicate moves
-                            current_section = task.get('section_id')
-                            if current_section == section_id:
-                                if task_logger:
-                                    task_logger.info(f"SECTION_SKIP: Task {task['id']} already in target section {section_name}")
+                        if selected_section:
+                            section_name = selected_section['section_name']
+                            
+                            # Get or create section
+                            section_id = None
+                            if selected_section['create_if_missing']:
+                                section_id = create_section_if_missing_sync(section_name, project_id, task_logger)
                             else:
-                                move_success = move_task_to_section(task['id'], section_id, task_logger, task['content'], args.bulk_mode)
-                            if move_success:
-                                if args.verbose:
-                                    log_success(f"📂 Moved task to section: {section_name}")
-                                
-                                log_task_action(task_logger, task['id'], task['content'], "MOVED_TO_SECTION",
-                                              section=section_name, rule_source=section_info['rule_source'])
+                                sections = get_project_sections(project_id, task_logger)
+                                section_id = sections.get(section_name)
+                            
+                            # Move task to section
+                            if section_id:
+                                # Check if task is already in target section to avoid duplicate moves
+                                current_section = task.get('section_id')
+                                if current_section == section_id:
+                                    if task_logger:
+                                        task_logger.info(f"SECTION_SKIP: Task {task['id']} already in target section {section_name}")
+                                else:
+                                    move_success = move_task_to_section(task['id'], section_id, task_logger, task['content'], args.bulk_mode)
+                                    if move_success:
+                                        if args.verbose:
+                                            log_success(f"📂 Moved task to section: {section_name}")
+                                        log_task_action(task_logger, task['id'], task['content'], "MOVED_TO_SECTION",
+                                                      section=section_name, priority=selected_section['priority'], 
+                                                      rule_source=selected_section['label'])
+                                    else:
+                                        log_task_action(task_logger, task['id'], task['content'], "MOVE_FAILED",
+                                                      error=f"Failed to move to section: {section_name}")
                             else:
-                                log_task_action(task_logger, task['id'], task['content'], "MOVE_FAILED",
-                                              error=f"Failed to move to section {section_name}")
+                                log_task_action(task_logger, task['id'], task['content'], "SECTION_NOT_FOUND",
+                                              error=f"Section '{section_name}' not found or could not be created")
                         else:
-                            log_task_action(task_logger, task['id'], task['content'], "SECTION_NOT_FOUND",
-                                          reason=f"Section '{section_name}' not found and create_if_missing=False")
+                            log_task_action(task_logger, task['id'], task['content'], "NO_VIABLE_SECTION",
+                                          error="No viable section found from candidates")
                     else:
-                        log_task_action(task_logger, task['id'], task['content'], "NO_PROJECT_ID",
-                                      reason="Cannot move to section without project_id")
+                        # Fallback to old behavior if no labels
+                        section_info = sections_to_move[0]
+                        section_name = section_info['section_name']
+                        
+                        if project_id:
+                            # Get or create section
+                            section_id = None
+                            if section_info['create_if_missing']:
+                                section_id = create_section_if_missing_sync(section_name, project_id, task_logger)
+                            else:
+                                sections = get_project_sections(project_id, task_logger)
+                                section_id = sections.get(section_name)
+                            
+                            # Move task to section
+                            if section_id:
+                                # Check if task is already in target section to avoid duplicate moves
+                                current_section = task.get('section_id')
+                                if current_section == section_id:
+                                    if task_logger:
+                                        task_logger.info(f"SECTION_SKIP: Task {task['id']} already in target section {section_name}")
+                                else:
+                                    move_success = move_task_to_section(task['id'], section_id, task_logger, task['content'], args.bulk_mode)
+                                    if move_success:
+                                        if args.verbose:
+                                            log_success(f"📂 Moved task to section: {section_name}")
+                                        log_task_action(task_logger, task['id'], task['content'], "MOVED_TO_SECTION",
+                                                      section=section_name, rule_source=section_info['rule_source'])
+                                    else:
+                                        log_task_action(task_logger, task['id'], task['content'], "MOVE_FAILED",
+                                                      error=f"Failed to move to section {section_name}")
+                            else:
+                                log_task_action(task_logger, task['id'], task['content'], "SECTION_NOT_FOUND",
+                                              reason=f"Section '{section_name}' not found and create_if_missing=False")
+                        else:
+                            log_task_action(task_logger, task['id'], task['content'], "NO_PROJECT_ID",
+                                          reason="Cannot move to section without project_id")
                 elif sections_to_move and args.dry_run:
-                    # Log what would happen in dry run
-                    section_name = sections_to_move[0]['section_name']
-                    log_info(f"📂 Would move task to section: {section_name}", "cyan")
-                    log_task_action(task_logger, task['id'], task['content'], "WOULD_MOVE_TO_SECTION",
-                                  section=section_name, rule_source=sections_to_move[0]['rule_source'])
+                    # Use priority-based section selection for dry run preview in legacy mode
+                    task_labels = set()
+                    for rule_info in applied_rules:
+                        if rule_info.get('label'):
+                            task_labels.add(rule_info['label'])
+                    
+                    project_id = task.get('project_id')
+                    if project_id and task_labels:
+                        selected_section = select_priority_section(task_labels, rules, project_id, task_logger)
+                        
+                        if selected_section:
+                            section_name = selected_section['section_name']
+                            log_info(f"📂 Would move task to section: {section_name} (priority: {selected_section['priority']})", "cyan")
+                            log_task_action(task_logger, task['id'], task['content'], "WOULD_MOVE_TO_SECTION",
+                                          section=section_name, priority=selected_section['priority'], 
+                                          rule_source=selected_section['label'])
+                        else:
+                            log_task_action(task_logger, task['id'], task['content'], "NO_VIABLE_SECTION",
+                                          error="No viable section found from candidates")
+                    else:
+                        # Fallback to old behavior if no labels
+                        section_name = sections_to_move[0]['section_name']
+                        log_info(f"📂 Would move task to section: {section_name}", "cyan")
+                        log_task_action(task_logger, task['id'], task['content'], "WOULD_MOVE_TO_SECTION",
+                                      section=section_name, rule_source=sections_to_move[0]['rule_source'])
 
             # Separate URL processing for link formatting (independent of labeling)
             if has_any_link:
