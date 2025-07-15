@@ -203,11 +203,29 @@ def parse_todoist_datetime(date_str):
         return None
 
 
-def should_process_task(task, last_run_time, task_logger=None):
+def should_process_task(task, last_run_time, task_logger=None, fix_sections=False):
     """Determine if a task should be processed based on creation time and existing labels"""
     task_id = task['id']
     
-    # Check creation time
+    # If fix_sections mode, check for tasks with labels but missing sections
+    if fix_sections:
+        existing_labels = set(task.get('labels', []))
+        section_id = task.get('section_id')
+        
+        # Check if task has 'link' label but no section
+        if 'link' in existing_labels and not section_id:
+            if task_logger:
+                task_logger.info(f"Task {task_id} | Processing: has 'link' label but missing section")
+            return True, "needs section routing"
+            
+        # Could add other label->section checks here in the future
+        
+        # In fix_sections mode, skip tasks that don't need section fixes
+        if task_logger:
+            task_logger.info(f"Task {task_id} | Skipping: no section fixes needed")
+        return False, "no section fixes needed"
+    
+    # Check creation time (normal mode)
     created_at = parse_todoist_datetime(task.get('created_at', ''))
     if created_at and created_at <= last_run_time:
         if task_logger:
@@ -839,17 +857,38 @@ def move_task_to_section_sync_api(task_id, section_id, task_logger=None, bulk_mo
                     task_logger.info(f"TASK_MOVED_SYNC: Task {task_id} moved to section {section_id} via Sync API (assumed success)")
                 return True
         elif response.status_code == 429:
-            # Rate limit hit - parse retry_after and log warning
+            # Rate limit hit - implement retry with shorter wait in bulk mode
             try:
                 error_data = response.json()
                 retry_after = error_data.get('error_extra', {}).get('retry_after', 60)
-                if task_logger:
-                    task_logger.warning(f"SYNC_RATE_LIMITED: Hit rate limit, need to wait {retry_after} seconds. Falling back to REST API.")
-                # Don't sleep here - let it fall back to REST API immediately
-                return False
+                
+                # In bulk mode, use shorter retry delays to avoid falling back to broken REST API
+                if bulk_mode and retry_after > 45:
+                    wait_time = min(retry_after, 45)  # Cap at 45 seconds in bulk mode
+                    if task_logger:
+                        task_logger.warning(f"SYNC_RATE_LIMITED: Bulk mode - waiting {wait_time}s instead of {retry_after}s")
+                    time.sleep(wait_time)
+                    
+                    # Retry once with Sync API
+                    retry_response = requests.post(sync_url, headers=HEADERS, json=sync_data)
+                    if retry_response.status_code == 200:
+                        retry_data = retry_response.json()
+                        command_uuid = command["uuid"]
+                        if retry_data.get("sync_status", {}).get(command_uuid) == "ok":
+                            if task_logger:
+                                task_logger.info(f"TASK_MOVED_SYNC_RETRY: Task {task_id} moved to section {section_id} after retry")
+                            return True
+                    
+                    if task_logger:
+                        task_logger.warning(f"SYNC_RETRY_FAILED: Retry failed, skipping task {task_id} for next run")
+                    return False
+                else:
+                    if task_logger:
+                        task_logger.warning(f"SYNC_RATE_LIMITED: Hit rate limit, need to wait {retry_after} seconds. Skipping for next run.")
+                    return False
             except:
                 if task_logger:
-                    task_logger.warning(f"SYNC_RATE_LIMITED: Hit rate limit (429), falling back to REST API")
+                    task_logger.warning(f"SYNC_RATE_LIMITED: Hit rate limit (429), skipping for next run")
                 return False
         else:
             if task_logger:
@@ -864,62 +903,15 @@ def move_task_to_section_sync_api(task_id, section_id, task_logger=None, bulk_mo
 
 
 def move_task_to_section(task_id, section_id, task_logger=None, task_content=None, bulk_mode=False):
-    """Move a task to a specific section - tries Sync API first, then falls back to REST API"""
+    """Move a task to a specific section using Sync API v9 with retry logic"""
     
-    # Try Sync API v9 first (more reliable for section moves)
+    # Use Sync API v9 exclusively - no fallback to broken REST API v2
     success = move_task_to_section_sync_api(task_id, section_id, task_logger, bulk_mode)
-    if success:
-        return True
     
-    # Fallback to REST API v2 (for compatibility)
-    if task_logger:
-        task_logger.warning(f"Sync API move failed, trying REST API fallback for task {task_id}")
+    if not success and task_logger:
+        task_logger.warning(f"TASK_MOVE_SKIPPED: Task {task_id} skipped due to rate limits - will retry in next run")
     
-    try:
-        # Include current content to satisfy API requirements and section_id to move
-        update_data = {
-            "section_id": int(section_id),
-            "content": task_content
-        }
-        url = f"{TODOIST_API}/tasks/{task_id}"
-        
-        if task_logger:
-            task_logger.info(f"TASK_MOVE_REQUEST: URL={url}, data={update_data}")
-        
-        response = requests.post(url, headers=HEADERS, json=update_data)
-        
-        if task_logger:
-            task_logger.info(f"TASK_MOVE_RESPONSE: status={response.status_code}, content={response.text[:200]}")
-        
-        if response.status_code in (200, 204):
-            # Verify the section was actually set by checking the response
-            try:
-                response_data = response.json()
-                actual_section_id = response_data.get('section_id')
-                expected_section_id = str(section_id)  # Compare as strings
-                
-                if actual_section_id == expected_section_id:
-                    if task_logger:
-                        task_logger.info(f"TASK_MOVED: Task {task_id} moved to section {section_id}")
-                    return True
-                else:
-                    if task_logger:
-                        task_logger.error(f"TASK_MOVE_FAILED: Task {task_id} section_id is {actual_section_id}, expected {expected_section_id}")
-                    return False
-            except Exception as e:
-                if task_logger:
-                    task_logger.error(f"TASK_MOVE_FAILED: Could not parse response for task {task_id}: {e}")
-                return False
-        else:
-            if task_logger:
-                task_logger.error(f"TASK_MOVE_FAILED: Failed to move task {task_id} to section {section_id} (HTTP {response.status_code})")
-            return False
-            
-    except Exception as e:
-        if task_logger:
-            task_logger.error(f"TASK_MOVE_ERROR: Error moving task {task_id} to section {section_id}: {e}")
-        log_warning(f"Failed to move task {task_id} to section: {e}")
-        return False
+    return success
 
 
 def log_task_action(task_logger, task_id, task_content, action, **kwargs):
@@ -1462,6 +1454,7 @@ def main(test_mode=False):
     parser.add_argument("--confidence-threshold", type=float, help="Minimum confidence threshold for label acceptance (0.0-1.0)")
     parser.add_argument("--soft-matching", action="store_true", help="Enable soft matching for labels not in available_labels")
     parser.add_argument("--bulk-mode", action="store_true", help="Enable bulk processing mode with extra rate limiting for large task volumes")
+    parser.add_argument("--fix-sections", action="store_true", help="Force section routing for tasks with labels but missing section assignments")
     args, _ = parser.parse_known_args()
     
     # Load unified configuration (CLI flags → env vars → task_sense_config → rules.json fallback)
@@ -1636,7 +1629,7 @@ def main(test_mode=False):
         
         for task in tasks:
             if last_run_time:
-                should_process, reason = should_process_task(task, last_run_time, task_logger)
+                should_process, reason = should_process_task(task, last_run_time, task_logger, args.fix_sections)
                 if should_process:
                     tasks_to_process.append(task)
                 else:
