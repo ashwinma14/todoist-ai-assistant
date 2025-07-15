@@ -1,0 +1,90 @@
+{
+  "_comment": "Copy this file to ranking_config.json and customize for your workflow",
+  "_description": "Configuration for TaskSense ranking engine - prioritizes backlog tasks into Today list",
+  "version": "4.0",
+  "default_limit": 3,
+  "scoring_weights": {
+    "_comment": "Weights for scoring components (must sum to 1.0)",
+    "priority": 0.4,
+    "due_date": 0.3,
+    "age": 0.1,
+    "label_preference": 0.2
+  },
+  "fallback_weights": {
+    "_comment": "Fallback scores for tasks missing criteria (prevents over-penalizing incomplete tasks)",
+    "no_priority": 0.3,
+    "no_due_date": 0.2,
+    "no_preferred_labels": 0.1
+  },
+  "priority_scores": {
+    "_comment": "Score mapping for Todoist priority levels",
+    "1": 1.0,
+    "2": 0.8,
+    "3": 0.6,
+    "4": 0.4
+  },
+  "due_date_scores": {
+    "_comment": "Score mapping for due date proximity",
+    "overdue": 1.0,
+    "today": 0.9,
+    "tomorrow": 0.7,
+    "this_week": 0.5,
+    "future": 0.2
+  },
+  "mode_settings": {
+    "_comment": "Mode-specific settings for work, personal, weekend, evening",
+    "work": {
+      "filters": [
+        "overdue & !@today",
+        "(p1 | p2) & 7 days & !@today",
+        "@work & !@today"
+      ],
+      "preferred_labels": ["work", "meeting", "urgent", "bug"],
+      "excluded_labels": ["personal", "shopping", "health"],
+      "weights": {
+        "priority": 0.5,
+        "due_date": 0.3,
+        "age": 0.05,
+        "label_preference": 0.15
+      }
+    },
+    "personal": {
+      "filters": [
+        "@personal & !@today",
+        "overdue & @personal",
+        "@health & !@today"
+      ],
+      "preferred_labels": ["personal", "health", "family", "home"],
+      "excluded_labels": ["work", "meeting"],
+      "weights": {
+        "priority": 0.3,
+        "due_date": 0.4,
+        "age": 0.1,
+        "label_preference": 0.2
+      }
+    }
+  },
+  "labels": {
+    "_comment": "Label management for ranking system",
+    "today_marker": "@today",
+    "feedback_labels": ["@today-done", "@today-skip", "@rank-ignore"]
+  },
+  "sections": {
+    "_comment": "Today section management",
+    "today_section": "Today",
+    "create_if_missing": true
+  },
+  "filtering": {
+    "_comment": "Task filtering options",
+    "enabled": true,
+    "fallback_to_full_backlog": true,
+    "backlog_only": true,
+    "exclude_completed": true
+  },
+  "logging": {
+    "_comment": "Logging configuration for ranking operations",
+    "verbose_scoring": true,
+    "log_candidates": true,
+    "log_moves": true
+  }
+}

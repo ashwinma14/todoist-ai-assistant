@@ -35,14 +35,16 @@ class TaskSense:
     configurable reasoning levels with structured output.
     """
     
-    def __init__(self, config_path: str = "task_sense_config.json"):
+    def __init__(self, config_path: str = "task_sense_config.json", ranking_config_path: str = "ranking_config.json"):
         """
         Initialize TaskSense engine with configuration.
         
         Args:
             config_path: Path to TaskSense configuration file
+            ranking_config_path: Path to ranking configuration file
         """
         self.config = self._load_config(config_path)
+        self.ranking_config = self._load_ranking_config(ranking_config_path)
         self.prompts = TaskSensePrompts() if PROMPTS_AVAILABLE else None
         self.logger = logging.getLogger('task_sense')
         
@@ -81,6 +83,74 @@ class TaskSense:
             "fallback_to_rules": True,
             "prompt_version": "v1.0",
             "model": "gpt-3.5-turbo"
+        }
+    
+    def _load_ranking_config(self, config_path: str) -> Dict[str, Any]:
+        """Load ranking configuration from JSON file."""
+        try:
+            with open(config_path, 'r') as f:
+                config = json.load(f)
+            self.logger.info(f"Loaded ranking config from {config_path}")
+            return config
+        except FileNotFoundError:
+            self.logger.warning(f"Ranking config file not found: {config_path}, using defaults")
+            return self._get_default_ranking_config()
+        except Exception as e:
+            self.logger.error(f"Error loading ranking config: {e}")
+            return self._get_default_ranking_config()
+    
+    def _get_default_ranking_config(self) -> Dict[str, Any]:
+        """Get default ranking configuration when config file is unavailable."""
+        return {
+            "version": "4.0",
+            "default_limit": 3,
+            "scoring_weights": {
+                "priority": 0.4,
+                "due_date": 0.3,
+                "age": 0.1,
+                "label_preference": 0.2
+            },
+            "fallback_weights": {
+                "no_priority": 0.3,
+                "no_due_date": 0.2,
+                "no_preferred_labels": 0.1
+            },
+            "priority_scores": {
+                "1": 1.0, "2": 0.8, "3": 0.6, "4": 0.4
+            },
+            "due_date_scores": {
+                "overdue": 1.0, "today": 0.9, "tomorrow": 0.7, "this_week": 0.5, "future": 0.2
+            },
+            "mode_settings": {
+                "work": {
+                    "filters": ["@work & !@today"],
+                    "preferred_labels": ["work", "meeting", "urgent"],
+                    "excluded_labels": ["personal"]
+                },
+                "personal": {
+                    "filters": ["@personal & !@today"],
+                    "preferred_labels": ["personal", "health", "family"],
+                    "excluded_labels": ["work"]
+                }
+            },
+            "labels": {
+                "today_marker": "@today",
+                "feedback_labels": ["@today-done", "@today-skip", "@rank-ignore"]
+            },
+            "sections": {
+                "today_section": "Today",
+                "create_if_missing": True
+            },
+            "filtering": {
+                "enabled": True,
+                "fallback_to_full_backlog": True,
+                "backlog_only": True
+            },
+            "logging": {
+                "verbose_scoring": True,
+                "log_candidates": True,
+                "log_moves": True
+            }
         }
     
     def label(self, 

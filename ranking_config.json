@@ -1,0 +1,109 @@
+{
+  "version": "4.0",
+  "default_limit": 3,
+  "scoring_weights": {
+    "priority": 0.4,
+    "due_date": 0.3,
+    "age": 0.1,
+    "label_preference": 0.2
+  },
+  "fallback_weights": {
+    "no_priority": 0.3,
+    "no_due_date": 0.2,
+    "no_preferred_labels": 0.1
+  },
+  "priority_scores": {
+    "1": 1.0,
+    "2": 0.8,
+    "3": 0.6,
+    "4": 0.4
+  },
+  "due_date_scores": {
+    "overdue": 1.0,
+    "today": 0.9,
+    "tomorrow": 0.7,
+    "this_week": 0.5,
+    "future": 0.2
+  },
+  "mode_settings": {
+    "work": {
+      "filters": [
+        "overdue & !@today",
+        "(p1 | p2) & 7 days & !@today",
+        "@work & !@today"
+      ],
+      "preferred_labels": ["work", "meeting", "urgent", "bug"],
+      "excluded_labels": ["personal", "shopping", "health"],
+      "weights": {
+        "priority": 0.5,
+        "due_date": 0.3,
+        "age": 0.05,
+        "label_preference": 0.15
+      }
+    },
+    "personal": {
+      "filters": [
+        "@personal & !@today",
+        "overdue & @personal",
+        "@health & !@today"
+      ],
+      "preferred_labels": ["personal", "health", "family", "home"],
+      "excluded_labels": ["work", "meeting"],
+      "weights": {
+        "priority": 0.3,
+        "due_date": 0.4,
+        "age": 0.1,
+        "label_preference": 0.2
+      }
+    },
+    "weekend": {
+      "filters": [
+        "@personal & !@today",
+        "@home & !@today",
+        "@family & !@today"
+      ],
+      "preferred_labels": ["personal", "home", "family", "health", "reading", "idea"],
+      "excluded_labels": ["work", "meeting", "urgent"],
+      "weights": {
+        "priority": 0.2,
+        "due_date": 0.3,
+        "age": 0.2,
+        "label_preference": 0.3
+      }
+    },
+    "evening": {
+      "filters": [
+        "@personal & !@today",
+        "@admin & !@today",
+        "@reading & !@today"
+      ],
+      "preferred_labels": ["personal", "admin", "home", "family", "reading", "idea"],
+      "excluded_labels": ["work", "meeting"],
+      "weights": {
+        "priority": 0.25,
+        "due_date": 0.35,
+        "age": 0.15,
+        "label_preference": 0.25
+      }
+    }
+  },
+  "labels": {
+    "today_marker": "@today",
+    "feedback_labels": ["@today-done", "@today-skip", "@rank-ignore"]
+  },
+  "sections": {
+    "today_section": "Today",
+    "create_if_missing": true
+  },
+  "filtering": {
+    "enabled": true,
+    "fallback_to_full_backlog": true,
+    "backlog_only": true,
+    "exclude_completed": true
+  },
+  "logging": {
+    "verbose_scoring": true,
+    "log_candidates": true,
+    "log_moves": true
+  }
+}
