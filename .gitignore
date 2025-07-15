@@ -7,3 +7,7 @@ task_log.txt
 last_run.txt
 claude.md
 settings.json
+
+# Personal configuration files (use .example.json templates)
+task_sense_config.json
+rules.json

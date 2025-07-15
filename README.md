@@ -59,6 +59,45 @@ The Todoist AI Assistant is an intelligent, context-aware automation system that
 
 ---
 
+## 🔧 Configuration Setup
+
+After cloning the repository, you'll need to set up your personal configuration files:
+
+```bash
+# Copy the example configuration files
+cp task_sense_config.example.json task_sense_config.json
+cp rules.example.json rules.json
+
+# Edit them for your personal workflow
+# task_sense_config.json - Contains your user profile, labels, and AI settings
+# rules.json - Contains your labeling rules and section routing preferences
+```
+
+**Important:** 
+- ⚠️ **Never commit `task_sense_config.json` or `rules.json` to GitHub** - they contain your personal data
+- ✅ The `.example.json` files are templates provided for your customization
+- 📝 Customize the `user_profile` field in `task_sense_config.json` to match your role and priorities
+
+### Environment Variables
+
+Create a `.env` file for your API keys and settings:
+
+```bash
+TODOIST_API_TOKEN=your_todoist_token_here
+OPENAI_API_KEY=your_openai_key_here  # Optional, for GPT fallback
+PROJECT_NAMES=YourProjectName
+```
+
+### Render Deployment
+
+For deploying to Render.com or similar platforms:
+1. Upload your personalized config files directly to the deployment environment
+2. Or use environment variables to specify custom config paths:
+   - `TASK_SENSE_CONFIG_PATH=/path/to/your/config.json`
+   - `RULES_CONFIG_PATH=/path/to/your/rules.json`
+
+---
+
 ## 📋 Example CLI Usage
 
 ```bash

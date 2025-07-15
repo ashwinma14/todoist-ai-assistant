@@ -1,0 +1,108 @@
+{
+  "_comment": "Copy this file to task_sense_config.json and customize for your needs",
+  "user_profile": "Describe your role and priorities here (e.g., 'I'm a software engineer who values productivity and work-life balance')",
+  "available_labels": [
+    "work",
+    "personal", 
+    "urgent",
+    "followup",
+    "health",
+    "admin",
+    "home",
+    "family",
+    "meeting",
+    "reading",
+    "idea"
+  ],
+  "default_mode": "work",
+  "reasoning_level": "light",
+  "fallback_to_rules": true,
+  "prompt_version": "v1.0",
+  "model": "gpt-3.5-turbo",
+  "confidence_threshold": 0.6,
+  "max_labels": 2,
+  "mode_settings": {
+    "work": {
+      "preferred_labels": ["work", "meeting", "urgent", "followup"],
+      "reasoning_level": "light"
+    },
+    "personal": {
+      "preferred_labels": ["personal", "health", "family", "home"],
+      "reasoning_level": "light"
+    },
+    "weekend": {
+      "preferred_labels": ["home", "personal", "family", "health"],
+      "reasoning_level": "light"
+    },
+    "evening": {
+      "preferred_labels": ["personal", "admin", "home", "family"],
+      "reasoning_level": "light"
+    }
+  },
+  "label_descriptions": {
+    "work": "Professional tasks, projects, and business activities",
+    "personal": "Individual activities, self-care, and personal development",
+    "urgent": "High-priority tasks requiring immediate attention",
+    "followup": "Tasks requiring follow-up communication or action",
+    "health": "Health-related appointments, exercise, and wellness",
+    "admin": "Administrative tasks, bills, paperwork, and bureaucracy",
+    "home": "House maintenance, cleaning, organization, and home projects",
+    "family": "Family-related activities, events, and responsibilities",
+    "meeting": "Scheduled meetings, calls, and appointments",
+    "reading": "Articles, books, documentation, and learning materials",
+    "idea": "Creative ideas, brainstorming, and future considerations"
+  },
+  "time_based_modes": {
+    "enabled": true,
+    "weekday_work_hours": [9, 17],
+    "evening_hours": [18, 22],
+    "weekend_days": [5, 6]
+  },
+  "api_settings": {
+    "timeout": 30,
+    "max_retries": 2,
+    "temperature": 0.3,
+    "max_tokens": 150
+  },
+  "gpt_fallback": {
+    "enabled": true,
+    "model": "gpt-3.5-turbo",
+    "base_prompt": "You are a productivity assistant. Assign the most relevant label to this Todoist task using one or two from this list: ['work', 'personal', 'admin', 'urgent', 'followup', 'home']",
+    "user_prompt_extension": "Consider the user's work-life balance priorities.",
+    "create_if_missing": false,
+    "temperature": 0.3,
+    "max_tokens": 150
+  },
+  "logging": {
+    "log_explanations": true,
+    "log_confidence": true,
+    "log_mode_detection": true
+  },
+  "mock_mode": {
+    "enabled": false,
+    "responses": {
+      "default": {
+        "labels": ["work", "personal"],
+        "explanation": "Mock response for testing",
+        "confidence": 0.8
+      },
+      "patterns": {
+        "meeting": {
+          "labels": ["work", "meeting"],
+          "explanation": "Mock response for meeting task",
+          "confidence": 0.9
+        },
+        "grocery": {
+          "labels": ["personal", "home"],
+          "explanation": "Mock response for grocery task",
+          "confidence": 0.85
+        },
+        "doctor": {
+          "labels": ["personal", "health"],
+          "explanation": "Mock response for health task",
+          "confidence": 0.9
+        }
+      }
+    }
+  }
+}

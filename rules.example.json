@@ -1,0 +1,68 @@
+{
+  "_comment": "Copy this file to rules.json and customize for your workflow",
+  "rules": [
+    {
+      "match": "url",
+      "label": "link",
+      "move_to": "Links",
+      "create_if_missing": true,
+      "_description": "Automatically label and move tasks containing URLs"
+    },
+    {
+      "contains": ["follow up", "email", "reach out", "contact"],
+      "label": "followup",
+      "move_to": "Follow-ups",
+      "create_if_missing": false,
+      "_description": "Tasks requiring follow-up communication"
+    },
+    {
+      "prefix": "!",
+      "label": "urgent",
+      "move_to": "Urgent",
+      "create_if_missing": false,
+      "_description": "Tasks starting with ! are marked urgent"
+    },
+    {
+      "contains": ["meeting", "call", "zoom", "teams", "standup"],
+      "label": "meeting",
+      "move_to": "Meetings",
+      "create_if_missing": false,
+      "_description": "Meeting and call-related tasks"
+    },
+    {
+      "contains": ["buy", "purchase", "order", "shopping", "grocery"],
+      "label": "shopping",
+      "move_to": "Shopping",
+      "create_if_missing": false,
+      "_description": "Shopping and purchasing tasks"
+    },
+    {
+      "contains": ["read", "article", "book", "blog", "documentation"],
+      "label": "reading",
+      "move_to": "Reading",
+      "create_if_missing": false,
+      "_description": "Reading and learning materials"
+    },
+    {
+      "regex": "\\b(bug|fix|issue|error|debug)\\b",
+      "label": "bug",
+      "move_to": "Issues",
+      "create_if_missing": false,
+      "_description": "Bug fixes and technical issues (uses regex matching)"
+    },
+    {
+      "contains": ["idea", "brainstorm", "concept", "think about"],
+      "label": "idea",
+      "move_to": "Ideas",
+      "create_if_missing": false,
+      "_description": "Creative ideas and brainstorming"
+    }
+  ],
+  "gpt_fallback": {
+    "enabled": true,
+    "model": "gpt-3.5-turbo",
+    "base_prompt": "You are a productivity assistant. Assign the most relevant label to this Todoist task using one or two from this list: ['work', 'personal', 'admin', 'urgent', 'followup', 'home']",
+    "user_prompt_extension": "Consider common productivity patterns and workflows.",
+    "_description": "Fallback GPT labeling when rules don't match"
+  }
+}
