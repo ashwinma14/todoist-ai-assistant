@@ -328,7 +328,7 @@ class LabelingPipeline:
                     log_task_action(self.logger, task['id'], task['content'], "NO_LABELS",
                                   reason="no rules matched and no GPT suggestions")
             
-            # Handle section routing
+            # Handle section routing from applied rules (for new labels)
             result.sections_to_move = []
             for rule_info in result.applied_rules:
                 if rule_info.get('move_to'):  # Enable both TaskSense and rules.json section routing
@@ -339,6 +339,24 @@ class LabelingPipeline:
                         'create_if_missing': rule_info.get('create_if_missing', False),
                         'rule_source': rule_info.get('matcher', 'unknown')
                     })
+            
+            # Universal section routing: Check ALL existing labels against rules
+            # This ensures tasks with existing labels get routed even if no new labels were applied
+            if not result.sections_to_move:  # Only if no routing from applied rules
+                existing_labels = set(task.get('labels', []))
+                if existing_labels:
+                    # Check each existing label against rules to find section routing candidates
+                    for label in existing_labels:
+                        for rule in self.rules:
+                            if rule.get('label') == label and rule.get('move_to'):
+                                if self.logger:
+                                    self.logger.info(f"EXISTING_LABEL_ROUTE_CANDIDATE: {label} → {rule['move_to']} (priority: {rule.get('priority', 999)})")
+                                result.sections_to_move.append({
+                                    'section_name': rule['move_to'],
+                                    'create_if_missing': rule.get('create_if_missing', False),
+                                    'rule_source': f"existing_label:{label}"
+                                })
+                                break  # Only need one rule per label
             
         except Exception as e:
             self.logger.error(f"Label application failed for task {task['id']}: {e}")

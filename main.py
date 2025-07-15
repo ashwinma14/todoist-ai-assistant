@@ -828,15 +828,28 @@ def select_priority_section(task_labels, rules, project_id, task_logger=None):
     return None
 
 
-def route_pre_labeled_task(task, rules, task_logger=None, dry_run=False, bulk_mode=False):
-    """Handle section routing for tasks that already have labels (fix-sections mode)"""
+def route_task_to_section(task, rules, task_logger=None, dry_run=False, bulk_mode=False, context="UNIVERSAL"):
+    """
+    Universal section routing for any task with existing labels.
+    
+    Args:
+        task: Task dictionary from Todoist API
+        rules: List of rules from rules.json
+        task_logger: Logger instance
+        dry_run: If True, only log what would happen
+        bulk_mode: If True, use bulk API operations
+        context: String context for logging (e.g., "UNIVERSAL", "PRE_LABELED")
+    
+    Returns:
+        bool: True if routing succeeded or no routing needed, False if failed
+    """
     existing_labels = set(task.get('labels', []))
     current_section_id = task.get('section_id')
     project_id = task.get('project_id')
     
     if not project_id:
         if task_logger:
-            task_logger.error(f"PRE_LABELED_ROUTE_ERROR: Task {task['id']} has no project_id")
+            task_logger.error(f"{context}_ROUTE_ERROR: Task {task['id']} has no project_id")
         return False
     
     if not existing_labels:
@@ -847,7 +860,7 @@ def route_pre_labeled_task(task, rules, task_logger=None, dry_run=False, bulk_mo
     
     if not selected_section:
         if task_logger:
-            task_logger.debug(f"PRE_LABELED_NO_SECTION: Task {task['id']} has no viable section candidates")
+            task_logger.debug(f"{context}_NO_SECTION: Task {task['id']} has no viable section candidates")
         return True  # No routing needed
     
     target_section_name = selected_section['section_name']
@@ -856,11 +869,11 @@ def route_pre_labeled_task(task, rules, task_logger=None, dry_run=False, bulk_mo
     # Check if task needs to be moved
     if current_section_name == target_section_name:
         if task_logger:
-            task_logger.info(f"PRE_LABELED_SKIP: Task {task['id']} already in target section '{target_section_name}' (reason: {selected_section['reason']})")
+            task_logger.info(f"{context}_SKIP: Task {task['id']} already in target section '{target_section_name}' (priority:{selected_section['priority']}, reason: {selected_section['reason']})")
         return True
     
     if task_logger:
-        task_logger.info(f"PRE_LABELED_ROUTE: Task {task['id']} with '{selected_section['label']}' label needs routing: '{current_section_name}' → '{target_section_name}' (reason: {selected_section['reason']})")
+        task_logger.info(f"{context}_ROUTE: Task {task['id']} with '{selected_section['label']}' label needs routing: '{current_section_name}' → '{target_section_name}' (priority:{selected_section['priority']}, reason: {selected_section['reason']})")
     
     if dry_run:
         if task_logger:
@@ -881,23 +894,28 @@ def route_pre_labeled_task(task, rules, task_logger=None, dry_run=False, bulk_mo
         # Check if already in target section (defensive check)
         if current_section_id == section_id:
             if task_logger:
-                task_logger.info(f"PRE_LABELED_SKIP: Task {task['id']} already in target section {target_section_name}")
+                task_logger.info(f"{context}_SKIP: Task {task['id']} already in target section {target_section_name}")
             return True
         
         # Move task to correct section
         move_success = move_task_to_section(task['id'], section_id, task_logger, task['content'], bulk_mode)
         if move_success:
             if task_logger:
-                task_logger.info(f"PRE_LABELED_MOVED: Task {task['id']} moved to section {target_section_name} (priority:{selected_section['priority']})")
+                task_logger.info(f"{context}_MOVED: Task {task['id']} moved to section {target_section_name} (priority:{selected_section['priority']})")
             return True
         else:
             if task_logger:
-                task_logger.error(f"PRE_LABELED_MOVE_FAILED: Failed to move task {task['id']} to section {target_section_name}")
+                task_logger.error(f"{context}_MOVE_FAILED: Failed to move task {task['id']} to section {target_section_name}")
             return False
     else:
         if task_logger:
-            task_logger.error(f"PRE_LABELED_SECTION_ERROR: Section {target_section_name} not found or could not be created")
+            task_logger.error(f"{context}_SECTION_ERROR: Section {target_section_name} not found or could not be created")
         return False
+
+
+def route_pre_labeled_task(task, rules, task_logger=None, dry_run=False, bulk_mode=False):
+    """Handle section routing for tasks that already have labels (fix-sections mode)"""
+    return route_task_to_section(task, rules, task_logger, dry_run, bulk_mode, context="PRE_LABELED")
 
 
 def create_section_if_missing(section_name, project_id, task_logger=None):
@@ -2089,6 +2107,17 @@ def main(test_mode=False):
                     log_info(f"🧠 TaskSense used for {stats['tasksense_used']} tasks")
                 if stats['confidence_filtered'] > 0:
                     log_info(f"🎯 Filtered {stats['confidence_filtered']} labels due to low confidence")
+            
+            # Universal section routing: Ensure ALL tasks with existing labels are properly routed
+            # This catches tasks that already had labels but weren't processed for section routing
+            if args.verbose:
+                log_info(f"🔄 Running universal section routing check on {len(tasks_to_process)} tasks")
+            
+            for task in tasks_to_process:
+                existing_labels = set(task.get('labels', []))
+                if existing_labels:
+                    # Route any task with existing labels to ensure proper section placement
+                    route_task_to_section(task, rules, task_logger, args.dry_run, args.bulk_mode, context="UNIVERSAL")
         else:
             # Fallback to original processing if pipeline not available
             log_warning("⚠️ LabelingPipeline not available, using legacy processing")
@@ -2346,6 +2375,17 @@ def main(test_mode=False):
                     route_success = route_pre_labeled_task(task, rules, task_logger, args.dry_run, args.bulk_mode)
                     if route_success and args.verbose:
                         log_success(f"🔄 Routed pre-labeled task to correct section")
+            
+            # Universal section routing for legacy processing: Ensure ALL tasks with existing labels are properly routed
+            # This catches any labeled tasks that weren't processed in the main loop
+            if args.verbose:
+                log_info(f"🔄 Running universal section routing check on {len(tasks_to_process)} tasks (legacy mode)")
+            
+            for task in tasks_to_process:
+                existing_labels = set(task.get('labels', []))
+                if existing_labels:
+                    # Route any task with existing labels to ensure proper section placement
+                    route_task_to_section(task, rules, task_logger, args.dry_run, args.bulk_mode, context="UNIVERSAL_LEGACY")
 
         # Save timestamp for next incremental run (only if not dry run and not test mode)
         if not args.dry_run and not test_mode and not force_full_scan:
