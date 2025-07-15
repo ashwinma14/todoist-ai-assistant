@@ -331,7 +331,9 @@ class LabelingPipeline:
             # Handle section routing
             result.sections_to_move = []
             for rule_info in result.applied_rules:
-                if rule_info.get('move_to') and rule_info.get('source') == 'rule':
+                if rule_info.get('move_to'):  # Enable both TaskSense and rules.json section routing
+                    if self.logger:
+                        self.logger.info(f"SECTION_ROUTE_CANDIDATE: {rule_info['label']} → {rule_info['move_to']} (source: {rule_info.get('source', 'unknown')})")
                     result.sections_to_move.append({
                         'section_name': rule_info['move_to'],
                         'create_if_missing': rule_info.get('create_if_missing', False),

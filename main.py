@@ -203,7 +203,7 @@ def parse_todoist_datetime(date_str):
         return None
 
 
-def should_process_task(task, last_run_time, task_logger=None, fix_sections=False):
+def should_process_task(task, last_run_time, task_logger=None, fix_sections=False, rules=None):
     """Determine if a task should be processed based on creation time and existing labels"""
     task_id = task['id']
     
@@ -218,7 +218,24 @@ def should_process_task(task, last_run_time, task_logger=None, fix_sections=Fals
                 task_logger.info(f"Task {task_id} | Processing: has 'link' label but missing section")
             return True, "needs section routing"
             
-        # Could add other label->section checks here in the future
+        # Check for other rule-based labels that need section routing
+        # Use provided rules if available, otherwise load them
+        if rules is None:
+            rules, _, _ = load_unified_config()
+        
+        for rule in rules:
+            rule_label = rule.get('label')
+            rule_move_to = rule.get('move_to')
+            if rule_label and rule_move_to and rule_label in existing_labels:
+                # This task has a label that should be moved to a section
+                # Check if it's missing a section or potentially in the wrong section
+                if not section_id:
+                    if task_logger:
+                        task_logger.info(f"Task {task_id} | Processing: has '{rule_label}' label but missing section (should be in '{rule_move_to}')")
+                    return True, "needs section routing"
+                # Note: We could also check if it's in the wrong section, but that would require
+                # fetching section names, which is more expensive. For now, we'll just handle
+                # tasks that have no section at all.
         
         # In fix_sections mode, skip tasks that don't need section fixes
         if task_logger:
@@ -849,7 +866,8 @@ def move_task_to_section_sync_api(task_id, section_id, task_logger=None, bulk_mo
                     return True
                 else:
                     if task_logger:
-                        task_logger.error(f"SYNC_MOVE_FAILED: Command failed - {response_data.get('sync_status', {}).get(command_uuid, 'unknown error')}")
+                        error_details = response_data.get('sync_status', {}).get(command_uuid, 'unknown error')
+                        task_logger.error(f"SYNC_MOVE_FAILED: Task {task_id} to section {section_id} | Error: {error_details} | Full response: {response.text[:500]}")
                     return False
             else:
                 # If no sync_status, assume success if no error
@@ -892,12 +910,12 @@ def move_task_to_section_sync_api(task_id, section_id, task_logger=None, bulk_mo
                 return False
         else:
             if task_logger:
-                task_logger.error(f"SYNC_MOVE_FAILED: HTTP {response.status_code} - {response.text[:200]}")
+                task_logger.error(f"SYNC_MOVE_HTTP_ERROR: Task {task_id} to section {section_id} | Status: {response.status_code} | Response: {response.text[:300]}")
             return False
             
     except Exception as e:
         if task_logger:
-            task_logger.error(f"SYNC_MOVE_ERROR: Error moving task {task_id} to section {section_id}: {e}")
+            task_logger.error(f"SYNC_MOVE_EXCEPTION: Task {task_id} to section {section_id} | Exception: {str(e)}")
         log_warning(f"Failed to move task {task_id} to section via Sync API: {e}")
         return False
 
@@ -1629,7 +1647,7 @@ def main(test_mode=False):
         
         for task in tasks:
             if last_run_time:
-                should_process, reason = should_process_task(task, last_run_time, task_logger, args.fix_sections)
+                should_process, reason = should_process_task(task, last_run_time, task_logger, args.fix_sections, rules)
                 if should_process:
                     tasks_to_process.append(task)
                 else:
@@ -1788,15 +1806,21 @@ def main(test_mode=False):
                         
                         # Move task to section
                         if section_id:
-                            move_success = move_task_to_section(task['id'], section_id, task_logger, task['content'], args.bulk_mode)
-                            if move_success:
-                                if args.verbose:
-                                    log_success(f"📁 Moved task to section: {section_name}")
-                                log_task_action(task_logger, task['id'], task['content'], "MOVED_TO_SECTION",
-                                              section=section_name, rule_source=section_info['rule_source'])
+                            # Check if task is already in target section to avoid duplicate moves
+                            current_section = task.get('section_id')
+                            if current_section == section_id:
+                                if task_logger:
+                                    task_logger.info(f"SECTION_SKIP: Task {task['id']} already in target section {section_name}")
                             else:
-                                log_task_action(task_logger, task['id'], task['content'], "MOVE_FAILED",
-                                              error=f"Failed to move to section: {section_name}")
+                                move_success = move_task_to_section(task['id'], section_id, task_logger, task['content'], args.bulk_mode)
+                                if move_success:
+                                    if args.verbose:
+                                        log_success(f"📁 Moved task to section: {section_name}")
+                                    log_task_action(task_logger, task['id'], task['content'], "MOVED_TO_SECTION",
+                                                  section=section_name, rule_source=section_info['rule_source'])
+                                else:
+                                    log_task_action(task_logger, task['id'], task['content'], "MOVE_FAILED",
+                                                  error=f"Failed to move to section: {section_name}")
                         else:
                             log_task_action(task_logger, task['id'], task['content'], "SECTION_NOT_FOUND",
                                           error=f"Section '{section_name}' not found or could not be created")
@@ -1923,7 +1947,13 @@ def main(test_mode=False):
                         
                         # Move task to section
                         if section_id:
-                            move_success = move_task_to_section(task['id'], section_id, task_logger, task['content'], args.bulk_mode)
+                            # Check if task is already in target section to avoid duplicate moves
+                            current_section = task.get('section_id')
+                            if current_section == section_id:
+                                if task_logger:
+                                    task_logger.info(f"SECTION_SKIP: Task {task['id']} already in target section {section_name}")
+                            else:
+                                move_success = move_task_to_section(task['id'], section_id, task_logger, task['content'], args.bulk_mode)
                             if move_success:
                                 if args.verbose:
                                     log_success(f"📂 Moved task to section: {section_name}")
