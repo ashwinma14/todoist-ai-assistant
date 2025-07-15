@@ -43,14 +43,17 @@ class TaskSense:
             config_path: Path to TaskSense configuration file
             ranking_config_path: Path to ranking configuration file
         """
-        self.config = self._load_config(config_path)
-        self.ranking_config = self._load_ranking_config(ranking_config_path)
-        self.prompts = TaskSensePrompts() if PROMPTS_AVAILABLE else None
+        # Initialize logger first
         self.logger = logging.getLogger('task_sense')
         
         # Engine metadata
         self.version = "v1.0"
         self.source = "TaskSense"
+        
+        # Load configurations
+        self.config = self._load_config(config_path)
+        self.ranking_config = self._load_ranking_config(ranking_config_path)
+        self.prompts = TaskSensePrompts() if PROMPTS_AVAILABLE else None
         
     def _load_config(self, config_path: str) -> Dict[str, Any]:
         """Load TaskSense configuration from JSON file."""
@@ -70,7 +73,8 @@ class TaskSense:
                 "model": "gpt-3.5-turbo"
             }
         except Exception as e:
-            self.logger.error(f"Error loading TaskSense config: {e}")
+            if self.logger:
+                self.logger.error(f"Error loading TaskSense config: {e}")
             return self._get_default_config()
     
     def _get_default_config(self) -> Dict[str, Any]:
@@ -90,13 +94,16 @@ class TaskSense:
         try:
             with open(config_path, 'r') as f:
                 config = json.load(f)
-            self.logger.info(f"Loaded ranking config from {config_path}")
+            if self.logger:
+                self.logger.info(f"Loaded ranking config from {config_path}")
             return config
         except FileNotFoundError:
-            self.logger.warning(f"Ranking config file not found: {config_path}, using defaults")
+            if self.logger:
+                self.logger.warning(f"Ranking config file not found: {config_path}, using defaults")
             return self._get_default_ranking_config()
         except Exception as e:
-            self.logger.error(f"Error loading ranking config: {e}")
+            if self.logger:
+                self.logger.error(f"Error loading ranking config: {e}")
             return self._get_default_ranking_config()
     
     def _get_default_ranking_config(self) -> Dict[str, Any]:
@@ -190,7 +197,8 @@ class TaskSense:
         try:
             return self._get_gpt_labels(task_content, available_labels, mode)
         except Exception as e:
-            self.logger.error(f"TaskSense GPT error: {e}")
+            if self.logger:
+                self.logger.error(f"TaskSense GPT error: {e}")
             return self._get_fallback_response(task_content, available_labels, mode, str(e))
     
     def _get_gpt_labels(self, task_content: str, available_labels: List[str], mode: str) -> Dict[str, Any]:
@@ -259,7 +267,8 @@ Please respond with one or two relevant labels from the available labels list.""
                     return response.choices[0].message.content.strip()
                     
             except Exception as e:
-                self.logger.warning(f"OpenAI package error: {e}, falling back to HTTP")
+                if self.logger:
+                    self.logger.warning(f"OpenAI package error: {e}, falling back to HTTP")
         
         # Fallback to direct HTTP
         return self._call_openai_http(prompt, model)
@@ -286,10 +295,12 @@ Please respond with one or two relevant labels from the available labels list.""
                 if result.get('choices') and result['choices'][0].get('message', {}).get('content'):
                     return result['choices'][0]['message']['content'].strip()
             else:
-                self.logger.error(f"OpenAI HTTP error: {response.status_code} - {response.text}")
+                if self.logger:
+                    self.logger.error(f"OpenAI HTTP error: {response.status_code} - {response.text}")
                 
         except Exception as e:
-            self.logger.error(f"OpenAI HTTP request error: {e}")
+            if self.logger:
+                self.logger.error(f"OpenAI HTTP request error: {e}")
             
         return None
     
@@ -540,7 +551,8 @@ Please respond with one or two relevant labels from the available labels list.""
                 return due_date_scores.get('future', 0.2)
                 
         except Exception as e:
-            self.logger.warning(f"Error parsing due date for task {task.get('id', 'unknown')}: {e}")
+            if self.logger:
+                self.logger.warning(f"Error parsing due date for task {task.get('id', 'unknown')}: {e}")
             fallback_weights = self.ranking_config.get('fallback_weights', {})
             return fallback_weights.get('no_due_date', 0.2)
     
@@ -582,7 +594,8 @@ Please respond with one or two relevant labels from the available labels list.""
             return age_score
             
         except Exception as e:
-            self.logger.warning(f"Error parsing creation date for task {task.get('id', 'unknown')}: {e}")
+            if self.logger:
+                self.logger.warning(f"Error parsing creation date for task {task.get('id', 'unknown')}: {e}")
             return 0.1
     
     def calculate_label_preference_score(self, task: Dict[str, Any], mode: str) -> float:
@@ -738,7 +751,8 @@ Please respond with one or two relevant labels from the available labels list.""
             backlog_tasks = tasks
         
         if not backlog_tasks:
-            self.logger.info("RANK_NO_CANDIDATES: No backlog tasks found to rank")
+            if self.logger:
+                self.logger.info("RANK_NO_CANDIDATES: No backlog tasks found to rank")
             return []
         
         # Score all tasks
@@ -757,13 +771,14 @@ Please respond with one or two relevant labels from the available labels list.""
                 scored_tasks.append(scored_task)
                 
                 # Log candidate if verbose logging enabled
-                if config.get('logging', {}).get('log_candidates', True):
+                if config.get('logging', {}).get('log_candidates', True) and self.logger:
                     task_id = task.get('id', 'unknown')
                     task_content = task.get('content', 'No content')[:50]
                     self.logger.info(f"RANK_CANDIDATES: Task {task_id} → Score: {score_result['score']} | Reason: {score_result['explanation']} | Content: {task_content}")
                     
             except Exception as e:
-                self.logger.error(f"Error scoring task {task.get('id', 'unknown')}: {e}")
+                if self.logger:
+                    self.logger.error(f"Error scoring task {task.get('id', 'unknown')}: {e}")
                 continue
         
         # Sort by score (descending)
@@ -773,14 +788,14 @@ Please respond with one or two relevant labels from the available labels list.""
         ranked_tasks = scored_tasks[:limit]
         
         # Log ranking summary
-        if ranked_tasks:
+        if ranked_tasks and self.logger:
             self.logger.info(f"RANK_SUMMARY: Selected {len(ranked_tasks)} tasks from {len(scored_tasks)} candidates (mode: {mode})")
             for i, ranked_task in enumerate(ranked_tasks, 1):
                 task_id = ranked_task['task'].get('id', 'unknown')
                 score = ranked_task['score']
                 explanation = ranked_task['explanation']
                 self.logger.info(f"RANK_TOP_{i}: Task {task_id} (score: {score}) - {explanation}")
-        else:
+        elif not ranked_tasks and self.logger:
             self.logger.info("RANK_EMPTY: No tasks qualified for ranking")
         
         return ranked_tasks

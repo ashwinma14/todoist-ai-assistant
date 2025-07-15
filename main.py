@@ -1703,6 +1703,12 @@ def main(test_mode=False):
     parser.add_argument("--soft-matching", action="store_true", help="Enable soft matching for labels not in available_labels")
     parser.add_argument("--bulk-mode", action="store_true", help="Enable bulk processing mode with extra rate limiting for large task volumes")
     parser.add_argument("--fix-sections", action="store_true", help="Force section routing for tasks with labels but missing section assignments")
+    
+    # Phase 4: Ranking and Today list generation
+    parser.add_argument("--generate-today", action="store_true", help="Generate today's prioritized task list using TaskSense ranking")
+    parser.add_argument("--limit", type=int, default=3, help="Number of tasks to select for today (default: 3)")
+    parser.add_argument("--refresh-today", action="store_true", help="Clear and regenerate today's task list")
+    
     args, _ = parser.parse_known_args()
     
     # Load unified configuration (CLI flags → env vars → task_sense_config → rules.json fallback)
@@ -1933,6 +1939,76 @@ def main(test_mode=False):
         # Add mode to session info
         if current_mode:
             log_info(f"🎯 TaskSense mode: {current_mode}")
+
+        # Phase 4: Handle ranking and today list generation
+        if args.generate_today:
+            if TASKSENSE_AVAILABLE:
+                try:
+                    # Initialize TaskSense with ranking config
+                    task_sense = TaskSense()
+                    
+                    # Use CLI mode or default
+                    ranking_mode = current_mode or task_sense.config.get('default_mode', 'personal')
+                    
+                    # Get ranking limit from CLI or config
+                    ranking_limit = args.limit or task_sense.ranking_config.get('default_limit', 3)
+                    
+                    log_info(f"🎯 Generating today's task list (mode: {ranking_mode}, limit: {ranking_limit})")
+                    task_logger.info(f"RANKING_START: Mode={ranking_mode}, Limit={ranking_limit}, Tasks={len(tasks_to_process)}")
+                    
+                    # Run ranking on all available tasks
+                    ranked_tasks = task_sense.rank(tasks_to_process, mode=ranking_mode, limit=ranking_limit)
+                    
+                    if ranked_tasks:
+                        if args.dry_run:
+                            log_info("🧪 DRY RUN: Today's prioritized tasks would be:", "yellow")
+                        else:
+                            log_info("🎯 Today's prioritized tasks:")
+                        
+                        # Display ranked results
+                        for i, ranked_task in enumerate(ranked_tasks, 1):
+                            task_data = ranked_task['task']
+                            score = ranked_task['score']
+                            explanation = ranked_task['explanation']
+                            task_content = task_data.get('content', 'No content')[:60]
+                            if len(task_data.get('content', '')) > 60:
+                                task_content += "..."
+                            
+                            if HAS_RICH:
+                                console.print(f"  {i}. [{score:.2f}] {task_content}", style="green")
+                                console.print(f"      💡 {explanation}", style="dim")
+                            else:
+                                print(f"  {i}. [{score:.2f}] {task_content}")
+                                print(f"      💡 {explanation}")
+                        
+                        # TODO: Add Today section management here in future
+                        # This would include:
+                        # - ensure_today_section_exists()
+                        # - move_tasks_to_today_section()  
+                        # - apply_today_labels()
+                        
+                        if not args.dry_run:
+                            log_success(f"✅ Selected {len(ranked_tasks)} tasks for today's focus")
+                            task_logger.info(f"RANKING_COMPLETE: Selected {len(ranked_tasks)} tasks")
+                        else:
+                            log_info(f"🧪 DRY RUN: Would select {len(ranked_tasks)} tasks for today", "yellow")
+                    else:
+                        log_info("ℹ️  No tasks qualified for today's ranking")
+                        task_logger.info("RANKING_EMPTY: No tasks qualified for ranking")
+                    
+                    # Exit early if only doing ranking (skip normal labeling pipeline)
+                    if args.generate_today:
+                        task_logger.info("=== RANKING SESSION END ===")
+                        return
+                        
+                except Exception as e:
+                    log_error(f"❌ Ranking failed: {str(e)}")
+                    task_logger.error(f"RANKING_ERROR: {str(e)}")
+                    return
+            else:
+                log_error("❌ TaskSense not available for ranking")
+                task_logger.error("RANKING_ERROR: TaskSense not available")
+                return
 
         # Create labeling pipeline
         if PIPELINE_AVAILABLE:
