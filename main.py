@@ -228,14 +228,20 @@ def should_process_task(task, last_run_time, task_logger=None, fix_sections=Fals
             rule_move_to = rule.get('move_to')
             if rule_label and rule_move_to and rule_label in existing_labels:
                 # This task has a label that should be moved to a section
-                # Check if it's missing a section or potentially in the wrong section
+                # Check if it's missing a section or in the wrong section
                 if not section_id:
                     if task_logger:
                         task_logger.info(f"Task {task_id} | Processing: has '{rule_label}' label but missing section (should be in '{rule_move_to}')")
                     return True, "needs section routing"
-                # Note: We could also check if it's in the wrong section, but that would require
-                # fetching section names, which is more expensive. For now, we'll just handle
-                # tasks that have no section at all.
+                else:
+                    # Check if task is in wrong section
+                    current_section_name = get_section_name_by_id(section_id, task.get('project_id'), task_logger)
+                    target_section_name = rule_move_to
+                    
+                    if current_section_name and current_section_name != target_section_name:
+                        if task_logger:
+                            task_logger.info(f"Task {task_id} | Processing: has '{rule_label}' label in wrong section ('{current_section_name}' → '{target_section_name}')")
+                        return True, f"needs section routing: {current_section_name} → {target_section_name}"
         
         # In fix_sections mode, skip tasks that don't need section fixes
         if task_logger:
@@ -693,6 +699,99 @@ def get_project_sections(project_id, task_logger=None):
             task_logger.error(f"SECTIONS_ERROR: Failed to get sections for project {project_id}: {e}")
         log_warning(f"Failed to get sections for project {project_id}: {e}")
         return {}
+
+
+def get_section_name_by_id(section_id, project_id, task_logger=None):
+    """Get section name from section_id for a specific project"""
+    if not section_id:
+        return None
+        
+    try:
+        response = requests.get(f"{TODOIST_API}/sections?project_id={project_id}", headers=HEADERS)
+        response.raise_for_status()
+        sections = response.json()
+        
+        # Find section by ID
+        for section in sections:
+            if section['id'] == section_id:
+                return section['name']
+        
+        # Section ID not found in this project
+        if task_logger:
+            task_logger.warning(f"SECTION_NOT_FOUND: Section ID {section_id} not found in project {project_id}")
+        return None
+        
+    except Exception as e:
+        if task_logger:
+            task_logger.error(f"SECTION_NAME_ERROR: Failed to get section name for ID {section_id}: {e}")
+        return None
+
+
+def route_pre_labeled_task(task, rules, task_logger=None, dry_run=False, bulk_mode=False):
+    """Handle section routing for tasks that already have labels (fix-sections mode)"""
+    existing_labels = set(task.get('labels', []))
+    current_section_id = task.get('section_id')
+    project_id = task.get('project_id')
+    
+    if not project_id:
+        if task_logger:
+            task_logger.error(f"PRE_LABELED_ROUTE_ERROR: Task {task['id']} has no project_id")
+        return False
+    
+    # Check each existing label against rules to see if it needs routing
+    for label in existing_labels:
+        for rule in rules:
+            rule_label = rule.get('label')
+            rule_move_to = rule.get('move_to')
+            
+            if rule_label == label and rule_move_to:
+                # This label should be in a specific section
+                target_section_name = rule_move_to
+                current_section_name = get_section_name_by_id(current_section_id, project_id, task_logger)
+                
+                # Check if task needs to be moved
+                if current_section_name != target_section_name:
+                    if task_logger:
+                        task_logger.info(f"PRE_LABELED_ROUTE: Task {task['id']} with '{label}' label needs routing: '{current_section_name}' → '{target_section_name}'")
+                    
+                    if dry_run:
+                        if task_logger:
+                            task_logger.info(f"DRY_RUN: Would move task {task['id']} to section {target_section_name}")
+                        return True
+                    
+                    # Get or create target section
+                    section_id = None
+                    create_if_missing = rule.get('create_if_missing', False)
+                    
+                    if create_if_missing:
+                        section_id = create_section_if_missing_sync(target_section_name, project_id, task_logger)
+                    else:
+                        sections = get_project_sections(project_id, task_logger)
+                        section_id = sections.get(target_section_name)
+                    
+                    if section_id:
+                        # Check if already in target section (defensive check)
+                        if current_section_id == section_id:
+                            if task_logger:
+                                task_logger.info(f"PRE_LABELED_SKIP: Task {task['id']} already in target section {target_section_name}")
+                            return True
+                        
+                        # Move task to correct section
+                        move_success = move_task_to_section(task['id'], section_id, task_logger, task['content'], bulk_mode)
+                        if move_success:
+                            if task_logger:
+                                task_logger.info(f"PRE_LABELED_MOVED: Task {task['id']} moved to section {target_section_name}")
+                            return True
+                        else:
+                            if task_logger:
+                                task_logger.error(f"PRE_LABELED_MOVE_FAILED: Failed to move task {task['id']} to section {target_section_name}")
+                    else:
+                        if task_logger:
+                            task_logger.error(f"PRE_LABELED_SECTION_ERROR: Section {target_section_name} not found or could not be created")
+                    
+                    return False  # Only process first matching rule
+    
+    return True  # No routing needed
 
 
 def create_section_if_missing(section_name, project_id, task_logger=None):
@@ -1731,6 +1830,13 @@ def main(test_mode=False):
                 result = pipeline.run(task)
                 pipeline_results.append(result)
                 
+                # Handle pre-labeled task routing in fix-sections mode
+                if args.fix_sections and not result.labels_applied:
+                    # Task didn't get new labels from pipeline, but might need section routing for existing labels
+                    route_success = route_pre_labeled_task(task, rules, task_logger, args.dry_run, args.bulk_mode)
+                    if route_success and args.verbose:
+                        log_success(f"🔄 Routed pre-labeled task to correct section")
+                
                 # Update summary based on pipeline results
                 if result.success and result.labels_applied:
                     # Track labels for summary
@@ -2029,6 +2135,13 @@ def main(test_mode=False):
                         first_url = urls[0]['url'] if urls else "multiple URLs"
                         log_task_action(task_logger, task['id'], task['content'], "SKIPPED",
                                       url=first_url, reason="no valid titles found")
+                
+                # Handle pre-labeled task routing in fix-sections mode (legacy processing)
+                if args.fix_sections and not rule_labels:
+                    # Task didn't get new labels from rules, but might need section routing for existing labels
+                    route_success = route_pre_labeled_task(task, rules, task_logger, args.dry_run, args.bulk_mode)
+                    if route_success and args.verbose:
+                        log_success(f"🔄 Routed pre-labeled task to correct section")
 
         # Save timestamp for next incremental run (only if not dry run and not test mode)
         if not args.dry_run and not test_mode and not force_full_scan:
