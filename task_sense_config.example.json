@@ -3,7 +3,7 @@
   "user_profile": "Describe your role and priorities here (e.g., 'I'm a software engineer who values productivity and work-life balance')",
   "available_labels": [
     "work",
-    "personal", 
+    "personal",
     "urgent",
     "followup",
     "health",
@@ -12,7 +12,11 @@
     "family",
     "meeting",
     "reading",
-    "idea"
+    "idea",
+    "people",
+    "shopping",
+    "bug",
+    "link"
   ],
   "default_mode": "work",
   "reasoning_level": "light",
@@ -23,19 +27,19 @@
   "max_labels": 2,
   "mode_settings": {
     "work": {
-      "preferred_labels": ["work", "meeting", "urgent", "followup"],
+      "preferred_labels": ["work", "meeting", "urgent", "followup", "bug"],
       "reasoning_level": "light"
     },
     "personal": {
-      "preferred_labels": ["personal", "health", "family", "home"],
+      "preferred_labels": ["personal", "health", "family", "home", "people"],
       "reasoning_level": "light"
     },
     "weekend": {
-      "preferred_labels": ["home", "personal", "family", "health"],
+      "preferred_labels": ["home", "personal", "family", "health", "reading", "idea"],
       "reasoning_level": "light"
     },
     "evening": {
-      "preferred_labels": ["personal", "admin", "home", "family"],
+      "preferred_labels": ["personal", "admin", "home", "family", "reading", "idea"],
       "reasoning_level": "light"
     }
   },
@@ -50,7 +54,11 @@
     "family": "Family-related activities, events, and responsibilities",
     "meeting": "Scheduled meetings, calls, and appointments",
     "reading": "Articles, books, documentation, and learning materials",
-    "idea": "Creative ideas, brainstorming, and future considerations"
+    "idea": "Creative ideas, brainstorming, and future considerations",
+    "people": "Tasks involving specific people or interpersonal communication",
+    "shopping": "Shopping lists and purchase-related tasks",
+    "bug": "Bugs, technical issues, and fixes",
+    "link": "Tasks that primarily consist of a URL or link"
   },
   "time_based_modes": {
     "enabled": true,
@@ -67,8 +75,8 @@
   "gpt_fallback": {
     "enabled": true,
     "model": "gpt-3.5-turbo",
-    "base_prompt": "You are a productivity assistant. Assign the most relevant label to this Todoist task using one or two from this list: ['work', 'personal', 'admin', 'urgent', 'followup', 'home']",
-    "user_prompt_extension": "Consider the user's work-life balance priorities.",
+    "base_prompt": "You are a productivity assistant. Assign the most relevant label to this Todoist task using one or two from this list: ['work', 'personal', 'admin', 'media', 'urgent', 'followup', 'home', 'health', 'family', 'idea', 'people', 'shopping', 'bug', 'link']",
+    "user_prompt_extension": "Only assign either 'work' or 'personal', but not both. If the task is about employment, business, or professional responsibilities, prefer 'work'. If the task relates to home, family, health, errands, or personal life, prefer 'personal'. If it's a household chore, prefer 'home'.",
     "create_if_missing": false,
     "temperature": 0.3,
     "max_tokens": 150
