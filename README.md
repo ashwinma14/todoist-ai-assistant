@@ -1,6 +1,8 @@
 # Todoist AI Assistant
 
-The Todoist AI Assistant is an intelligent, context-aware automation system that transforms your [Todoist](https://todoist.com) into a clean, actionable workspace. Powered by the **TaskSense AI Engine**, it labels and organizes your tasks, adapts to your personal work patterns, and helps you focus on what matters most — all while maintaining transparency, configurability, and reliability.
+The Todoist AI Assistant is an intelligent, context-aware automation system that transforms your [Todoist](https://todoist.com) into a clean, actionable workspace.  
+Powered by the **TaskSense AI Engine**, it labels, organizes, and prioritizes your tasks — adapting to your personal work patterns and helping you focus on what matters most.  
+All while maintaining transparency, configurability, and reliability.
 
 ---
 
@@ -13,6 +15,14 @@ The Todoist AI Assistant is an intelligent, context-aware automation system that
 - Supports **reasoning levels**: minimal (labels only), light (labels + explanation), deep (labels + explanation + rationale)
 - Offers **soft matching mode**, suggesting new labels outside your predefined set for later review
 
+### Smart Daily Focus
+
+- Ranks your backlog tasks and selects the most relevant ones for **Today**
+- Populates a dedicated **Today section** with your top priorities
+- Takes into account task priority, due date, age, and your preferred labels
+- Mode-aware prioritization (work, personal, weekend, evening) for context-appropriate suggestions
+- Supports `--dry-run` so you can preview your Today list before applying
+
 ### URL & Domain Awareness
 
 - Detects and formats URLs in tasks into clean, readable `[Title](URL)` links
@@ -20,7 +30,7 @@ The Todoist AI Assistant is an intelligent, context-aware automation system that
 
 ### Section Routing
 
-- Moves tasks into appropriate sections (e.g., Links, Meetings, Urgent) based on applied labels and rules
+- Moves tasks into appropriate sections (e.g., Links, Meetings, Urgent, Today) based on applied labels and rules
 - Respects existing `create_if_missing` and manual section setup
 
 ### Rule & Fallback Logic
@@ -41,21 +51,22 @@ The Todoist AI Assistant is an intelligent, context-aware automation system that
 
 ## 🚀 Why Use It?
 
-✅ Personalized, context-aware task organization\
-✅ Transparent and trustworthy with clear explanations and logs\
-✅ Modular and extensible architecture, ready for advanced features\
-✅ Developer-friendly with mock modes, validation tools, and structured logging\
+✅ Personalized, context-aware task organization  
+✅ Transparent and trustworthy with clear explanations and logs  
+✅ Automatically identifies what to focus on today  
+✅ Modular and extensible architecture, ready for advanced features  
+✅ Developer-friendly with mock modes, validation tools, and structured logging  
 ✅ Backward compatible with your existing Todoist setup and rules
 
 ---
 
 ## 🧰 Key Components
 
-- **TaskSense AI Engine:** Core semantic engine responsible for intelligent labeling and reasoning
-- **Pipeline Architecture:** Modular stages for labeling, rules, domain detection, and section routing
-- **Unified Configuration:** Centralized `task_sense_config.json` plus optional overrides via CLI or env vars
+- **TaskSense AI Engine:** Core semantic engine responsible for intelligent labeling, reasoning, and prioritization
+- **Pipeline Architecture:** Modular stages for labeling, rules, domain detection, ranking, and section routing
+- **Unified Configuration:** Centralized `task_sense_config.json` and `ranking_config.json` plus optional overrides via CLI or env vars
 - **Testing & Validation:** Mock modes, regression tests, config validation script (`validate_config.py`)
-- **Logging:** Detailed, structured logs with explanations, confidence levels, and version metadata
+- **Logging:** Detailed, structured logs with explanations, scores, confidence levels, and version metadata
 
 ---
 
@@ -67,16 +78,18 @@ After cloning the repository, you'll need to set up your personal configuration 
 # Copy the example configuration files
 cp task_sense_config.example.json task_sense_config.json
 cp rules.example.json rules.json
+cp ranking_config.example.json ranking_config.json
 
 # Edit them for your personal workflow
 # task_sense_config.json - Contains your user profile, labels, and AI settings
 # rules.json - Contains your labeling rules and section routing preferences
+# ranking_config.json - Controls scoring weights and Today list preferences
 ```
 
-**Important:** 
-- ⚠️ **Never commit `task_sense_config.json` or `rules.json` to GitHub** - they contain your personal data
-- ✅ The `.example.json` files are templates provided for your customization
-- 📝 Customize the `user_profile` field in `task_sense_config.json` to match your role and priorities
+**Important:**  
+⚠️ **Never commit `task_sense_config.json`, `rules.json`, or `ranking_config.json` to GitHub** — they contain your personal data  
+✅ The `.example.json` files are templates provided for your customization  
+📝 Customize the `user_profile` field in `task_sense_config.json` and the scoring weights in `ranking_config.json` to match your priorities
 
 ### Environment Variables
 
@@ -95,6 +108,7 @@ For deploying to Render.com or similar platforms:
 2. Or use environment variables to specify custom config paths:
    - `TASK_SENSE_CONFIG_PATH=/path/to/your/config.json`
    - `RULES_CONFIG_PATH=/path/to/your/rules.json`
+   - `RANKING_CONFIG_PATH=/path/to/your/ranking_config.json`
 
 ---
 
@@ -104,14 +118,17 @@ For deploying to Render.com or similar platforms:
 # Process inbox in work mode
 python main.py --mode=work
 
-# Label a specific task interactively
-python main.py --label-task "Schedule quarterly review" --mode=work
+# Generate today’s prioritized task list
+python main.py --generate-today --mode=work --limit=3
 
-# Run in soft-matching mode and log suggestions
-python main.py --mode=auto --soft-matching
+# Preview today’s ranking without making changes
+python main.py --generate-today --mode=work --limit=3 --dry-run
 
-# Validate configuration
-python validate_config.py
+# Refresh Today section and regenerate
+python main.py --generate-today --mode=personal --limit=5 --refresh-today
+
+# Auto-detect mode based on time
+python main.py --generate-today --mode=auto
 ```
 
 ---
@@ -119,24 +136,13 @@ python validate_config.py
 ## 📊 Example Output
 
 ```text
-Task 123 | TaskSense: #personal (v1.3.2, light) | Confidence: 0.85 | Explanation: Daycare tour aligns with parenting goals
+Task 123 | TaskSense: #personal (v1.4.0, light) | Confidence: 0.85 | Explanation: Daycare tour aligns with parenting goals
+
+RANK_CANDIDATES: Task 12345 → Score: 0.82 | Reason: High priority and overdue
+TODAY_MOVE: Task 12345 moved to Today section
 ```
 
-Soft-matched labels are logged and surfaced in the feedback workflow for later review.
-
----
-
-## 🧾 Feedback & Continuous Improvement
-
-Low-confidence or soft-matched suggestions are logged for future correction. Feedback workflows and interactive correction interfaces are planned for future releases.
-
----
-
-## 📜 Versioning
-
-- **TaskSense Engine:** v1.3.2
-- **Pipeline:** v3.0.0
-- See `CHANGELOG.md` for full history
+Soft-matched labels and daily focus scores are logged and surfaced in the feedback workflow for later review.
 
 ---
 
@@ -153,4 +159,3 @@ MIT License. See `LICENSE` for details.
 ---
 
 The Todoist AI Assistant turns your cluttered task list into a personalized, focused, and manageable system — so you can spend less time organizing and more time doing.
-
