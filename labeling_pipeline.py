@@ -280,8 +280,24 @@ class LabelingPipeline:
             new_labels = filtered_labels - existing_labels
             result.labels_applied = list(new_labels)
             
+            # Enhanced logging for existing labels
+            if existing_labels and self.verbose:
+                self.logger.info(f"Task {task['id']} | EXISTING_LABELS: {existing_labels} | Content: {task['content'][:60]}...")
+            
+            if existing_labels & filtered_labels:
+                # Some labels already exist
+                already_has = existing_labels & filtered_labels
+                if self.verbose:
+                    self.logger.info(f"Task {task['id']} | SKIP_EXISTING_LABELS: already has {already_has} | New labels: {new_labels}")
+                elif self.logger:
+                    self.logger.info(f"Task {task['id']} | SKIP_EXISTING_LABELS: already has {already_has}")
+            
             if self.verbose and new_labels:
-                self.logger.info(f"Will apply {len(new_labels)} new labels to task {task['id']}: {new_labels}")
+                self.logger.info(f"Task {task['id']} | WILL_APPLY_LABELS: {new_labels}")
+            elif not new_labels and not existing_labels:
+                # No labels at all
+                if self.verbose:
+                    self.logger.info(f"Task {task['id']} | NO_LABELS_FOUND: no labels identified | Content: {task['content'][:60]}...")
             
         except Exception as e:
             self.logger.error(f"Label consolidation failed for task {task['id']}: {e}")

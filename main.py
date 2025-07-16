@@ -206,6 +206,7 @@ def parse_todoist_datetime(date_str):
 def should_process_task(task, last_run_time, task_logger=None, fix_sections=False, rules=None):
     """Determine if a task should be processed based on creation time and existing labels"""
     task_id = task['id']
+    content = task['content']
     
     # If fix_sections mode, check for tasks with labels but missing sections
     if fix_sections:
@@ -252,11 +253,10 @@ def should_process_task(task, last_run_time, task_logger=None, fix_sections=Fals
     created_at = parse_todoist_datetime(task.get('created_at', ''))
     if created_at and created_at <= last_run_time:
         if task_logger:
-            task_logger.info(f"Task {task_id} | Skipping: created before last run ({created_at} <= {last_run_time})")
+            task_logger.info(f"Task {task_id} | SKIP_TIMESTAMP: created before last run ({created_at} <= {last_run_time}) | Content: {content[:60]}...")
         return False, "created before last run"
     
-    # Get task content for processing
-    content = task['content']
+    # Get task labels for processing
     existing_labels = set(task.get('labels', []))
     
     # Check if task has URLs
@@ -274,7 +274,7 @@ def should_process_task(task, last_run_time, task_logger=None, fix_sections=Fals
         # If task already has all expected URL labels, skip URL processing
         if expected_labels.issubset(existing_labels):
             if task_logger:
-                task_logger.info(f"Task {task_id} | Skipping: already has all expected URL labels {expected_labels}")
+                task_logger.info(f"Task {task_id} | SKIP_ALREADY_LABELED: already has all expected URL labels {expected_labels} | Content: {content[:60]}...")
             return False, "already fully labeled"
     
     # Always allow processing for rule-based labeling and GPT fallback
@@ -2679,7 +2679,9 @@ def main(test_mode=False):
                                 current_section = task.get('section_id')
                                 if current_section == section_id:
                                     if task_logger:
-                                        task_logger.info(f"SECTION_SKIP: Task {task['id']} already in target section {section_name}")
+                                        task_logger.info(f"SECTION_SKIP: Task {task['id']} already in target section {section_name} | Content: {task['content'][:60]}...")
+                                    if args.verbose:
+                                        log_info(f"⚠️  Task already in correct section: {section_name}")
                                 else:
                                     # Check if task is in Today section - if so, don't move it
                                     sections = get_project_sections(project_id, task_logger)
@@ -2876,7 +2878,9 @@ def main(test_mode=False):
                                 current_section = task.get('section_id')
                                 if current_section == section_id:
                                     if task_logger:
-                                        task_logger.info(f"SECTION_SKIP: Task {task['id']} already in target section {section_name}")
+                                        task_logger.info(f"SECTION_SKIP: Task {task['id']} already in target section {section_name} | Content: {task['content'][:60]}...")
+                                    if args.verbose:
+                                        log_info(f"⚠️  Task already in correct section: {section_name}")
                                 else:
                                     # Check if task is in Today section - if so, don't move it
                                     sections = get_project_sections(project_id, task_logger)
@@ -2923,7 +2927,9 @@ def main(test_mode=False):
                                 current_section = task.get('section_id')
                                 if current_section == section_id:
                                     if task_logger:
-                                        task_logger.info(f"SECTION_SKIP: Task {task['id']} already in target section {section_name}")
+                                        task_logger.info(f"SECTION_SKIP: Task {task['id']} already in target section {section_name} | Content: {task['content'][:60]}...")
+                                    if args.verbose:
+                                        log_info(f"⚠️  Task already in correct section: {section_name}")
                                 else:
                                     # Check if task is in Today section - if so, don't move it
                                     sections = get_project_sections(project_id, task_logger)
