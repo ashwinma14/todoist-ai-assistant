@@ -2119,6 +2119,7 @@ def main(test_mode=False):
     
     # Phase 4: Ranking and Today list generation
     parser.add_argument("--generate-today", action="store_true", help="Generate today's prioritized task list using TaskSense ranking")
+    parser.add_argument("--gpt-enhanced-ranking", action="store_true", help="Use GPT-enhanced ranking with explanations")
     parser.add_argument("--limit", type=int, default=3, help="Number of tasks to select for today (default: 3)")
     parser.add_argument("--refresh-today", action="store_true", help="Clear and regenerate today's task list")
     parser.add_argument("--refresh-today-dates", action="store_true", help="Update due dates to today for all tasks in Today section")
@@ -2439,6 +2440,7 @@ def main(test_mode=False):
                 try:
                     # Initialize TaskSense with ranking config
                     task_sense = TaskSense()
+                    task_sense.logger = task_logger  # Use the same logger as main
                     
                     # Use CLI mode or default
                     ranking_mode = current_mode or task_sense.config.get('default_mode', 'personal')
@@ -2449,8 +2451,13 @@ def main(test_mode=False):
                     log_info(f"🎯 Generating today's task list (mode: {ranking_mode}, limit: {ranking_limit})")
                     task_logger.info(f"RANKING_START: Mode={ranking_mode}, Limit={ranking_limit}, Tasks={len(tasks_to_process)}")
                     
-                    # Run ranking on all available tasks
-                    ranked_tasks = task_sense.rank(tasks_to_process, mode=ranking_mode, limit=ranking_limit)
+                    # Run ranking on all available tasks (with GPT enhancement if requested)
+                    if args.gpt_enhanced_ranking:
+                        log_info(f"🤖 Using GPT-enhanced ranking with explanations")
+                        task_logger.info(f"RANKING_MODE: GPT-enhanced ranking enabled")
+                        ranked_tasks = task_sense.rank_with_gpt_explanations(tasks_to_process, mode=ranking_mode, limit=ranking_limit)
+                    else:
+                        ranked_tasks = task_sense.rank(tasks_to_process, mode=ranking_mode, limit=ranking_limit)
                     
                     if ranked_tasks:
                         if args.dry_run:
@@ -2461,18 +2468,40 @@ def main(test_mode=False):
                         # Display ranked results
                         for i, ranked_task in enumerate(ranked_tasks, 1):
                             task_data = ranked_task['task']
-                            score = ranked_task['score']
-                            explanation = ranked_task['explanation']
                             task_content = task_data.get('content', 'No content')[:60]
                             if len(task_data.get('content', '')) > 60:
                                 task_content += "..."
                             
-                            if HAS_RICH:
-                                console.print(f"  {i}. [{score:.2f}] {task_content}", style="green")
-                                console.print(f"      💡 {explanation}", style="dim")
+                            # Handle both regular and GPT-enhanced ranking results
+                            if args.gpt_enhanced_ranking and 'final_score' in ranked_task:
+                                # GPT-enhanced ranking
+                                final_score = ranked_task['final_score']
+                                base_score = ranked_task.get('base_score', final_score)
+                                gpt_explanation = ranked_task.get('gpt_explanation', '')
+                                gpt_confidence = ranked_task.get('gpt_confidence', 0.0)
+                                ranking_source = ranked_task.get('ranking_source', 'base_only')
+                                
+                                score_display = f"{final_score:.2f}"
+                                if final_score != base_score:
+                                    score_display += f" (base: {base_score:.2f})"
+                                
+                                if HAS_RICH:
+                                    console.print(f"  {i}. [{score_display}] {task_content}", style="green")
+                                    console.print(f"      🤖 {gpt_explanation} (confidence: {gpt_confidence:.2f}, source: {ranking_source})", style="dim blue")
+                                else:
+                                    print(f"  {i}. [{score_display}] {task_content}")
+                                    print(f"      🤖 {gpt_explanation} (confidence: {gpt_confidence:.2f}, source: {ranking_source})")
                             else:
-                                print(f"  {i}. [{score:.2f}] {task_content}")
-                                print(f"      💡 {explanation}")
+                                # Regular ranking
+                                score = ranked_task['score']
+                                explanation = ranked_task['explanation']
+                                
+                                if HAS_RICH:
+                                    console.print(f"  {i}. [{score:.2f}] {task_content}", style="green")
+                                    console.print(f"      💡 {explanation}", style="dim")
+                                else:
+                                    print(f"  {i}. [{score:.2f}] {task_content}")
+                                    print(f"      💡 {explanation}")
                         
                         # Today section management
                         today_section_id = None

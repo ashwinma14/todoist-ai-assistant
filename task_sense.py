@@ -853,6 +853,264 @@ Please respond with one or two relevant labels from the available labels list.""
         
         return ranked_tasks
     
+    def rank_with_gpt_explanations(self, tasks: List[Dict[str, Any]], mode: Optional[str] = None, limit: int = 3, config_override: Optional[Dict] = None) -> List[Dict[str, Any]]:
+        """
+        Rank tasks with GPT-enhanced explanations and reranking.
+        
+        Args:
+            tasks: List of task dictionaries from Todoist API
+            mode: Override mode (work, personal, weekend, evening, auto)
+            limit: Maximum tasks to return (default: 3)
+            config_override: Override default ranking config
+            
+        Returns:
+            List of ranked tasks with GPT explanations and potential reranking
+        """
+        # First, get the base ranking
+        base_ranking = self.rank(tasks, mode, limit * 2, config_override)  # Get more candidates for reranking
+        
+        if not base_ranking:
+            if self.logger:
+                self.logger.info("GPT_RANK_EMPTY: No base ranking candidates for GPT enhancement")
+            return []
+        
+        # Use override config or default
+        config = config_override or self.ranking_config
+        
+        # Determine mode
+        if mode is None:
+            mode = self.config.get('default_mode', 'personal')
+        elif mode == 'auto':
+            mode = self._detect_mode()
+        
+        # Log GPT ranking start
+        if self.logger:
+            self.logger.info(f"GPT_RANK_START: Processing {len(base_ranking)} candidates for GPT-enhanced ranking (mode: {mode})")
+        
+        # Get GPT explanations for top candidates
+        gpt_enhanced_tasks = []
+        for i, ranked_task in enumerate(base_ranking):
+            task = ranked_task['task']
+            base_score = ranked_task['score']
+            base_explanation = ranked_task['explanation']
+            
+            # Get GPT explanation
+            gpt_result = self._get_gpt_ranking_explanation(task, base_score, base_explanation, mode)
+            
+            enhanced_task = {
+                'task': task,
+                'base_score': base_score,
+                'base_explanation': base_explanation,
+                'gpt_explanation': gpt_result.get('explanation', ''),
+                'gpt_confidence': gpt_result.get('confidence', 0.0),
+                'gpt_model': gpt_result.get('model', 'unknown'),
+                'gpt_rerank_score': gpt_result.get('rerank_score', base_score),
+                'final_score': gpt_result.get('rerank_score', base_score),
+                'ranking_source': gpt_result.get('source', 'base_only')
+            }
+            
+            gpt_enhanced_tasks.append(enhanced_task)
+            
+            # Log GPT ranking for each candidate
+            if self.logger:
+                task_id = task.get('id', 'unknown')
+                task_content = task.get('content', 'No content')[:50]
+                gpt_source = gpt_result.get('source', 'base_only')
+                gpt_confidence = gpt_result.get('confidence', 0.0)
+                gpt_model = gpt_result.get('model', 'unknown')
+                
+                self.logger.info(f"GPT_RANK_CANDIDATE: Task {task_id} → Base: {base_score:.3f} | GPT: {gpt_result.get('rerank_score', base_score):.3f} | Confidence: {gpt_confidence:.2f} | Model: {gpt_model} | Source: {gpt_source}")
+                self.logger.info(f"GPT_RANK_EXPLANATION: Task {task_id} | Base: {base_explanation} | GPT: {gpt_result.get('explanation', 'No explanation')} | Content: {task_content}")
+        
+        # Sort by final score (which may include GPT reranking)
+        gpt_enhanced_tasks.sort(key=lambda x: x['final_score'], reverse=True)
+        
+        # Apply limit
+        final_ranking = gpt_enhanced_tasks[:limit]
+        
+        # Log GPT ranking summary
+        if final_ranking and self.logger:
+            gpt_enhanced_count = len([t for t in final_ranking if t['ranking_source'] == 'gpt_enhanced'])
+            self.logger.info(f"GPT_RANK_SUMMARY: Selected {len(final_ranking)} tasks from {len(gpt_enhanced_tasks)} candidates ({gpt_enhanced_count} GPT-enhanced)")
+            
+            for i, ranked_task in enumerate(final_ranking, 1):
+                task_id = ranked_task['task'].get('id', 'unknown')
+                final_score = ranked_task['final_score']
+                base_score = ranked_task['base_score']
+                source = ranked_task['ranking_source']
+                gpt_explanation = ranked_task['gpt_explanation']
+                
+                score_change = f" (↑{final_score - base_score:.3f})" if final_score > base_score else f" (↓{base_score - final_score:.3f})" if final_score < base_score else ""
+                
+                self.logger.info(f"GPT_RANK_TOP_{i}: Task {task_id} (score: {final_score:.3f}{score_change}) - {source} | GPT: {gpt_explanation}")
+        
+        return final_ranking
+    
+    def _get_gpt_ranking_explanation(self, task: Dict[str, Any], base_score: float, base_explanation: str, mode: str) -> Dict[str, Any]:
+        """
+        Get GPT explanation and potential reranking for a task.
+        
+        Args:
+            task: Task dictionary
+            base_score: Base ranking score
+            base_explanation: Base ranking explanation
+            mode: Current mode (work, personal, etc.)
+            
+        Returns:
+            Dictionary with GPT explanation, confidence, and potential rerank score
+        """
+        # Check if OpenAI is available
+        if not OPENAI_AVAILABLE or not os.environ.get('OPENAI_API_KEY'):
+            return {
+                'explanation': base_explanation,
+                'confidence': 0.0,
+                'model': 'none',
+                'rerank_score': base_score,
+                'source': 'base_only'
+            }
+        
+        # Handle mock mode for testing
+        if os.environ.get('GPT_MOCK_MODE') or self.config.get('mock_mode', {}).get('enabled', False):
+            return self._get_mock_gpt_explanation(task, base_score, base_explanation, mode)
+        
+        try:
+            # Construct GPT prompt for ranking explanation
+            prompt = self._construct_gpt_ranking_prompt(task, base_score, base_explanation, mode)
+            
+            # Get response from OpenAI
+            response = self._call_openai_api(prompt)
+            
+            if response:
+                return self._parse_gpt_ranking_response(response, task, base_score, base_explanation)
+            else:
+                return {
+                    'explanation': base_explanation,
+                    'confidence': 0.0,
+                    'model': 'api_error',
+                    'rerank_score': base_score,
+                    'source': 'base_only'
+                }
+                
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"GPT ranking explanation error for task {task.get('id', 'unknown')}: {e}")
+            
+            return {
+                'explanation': base_explanation,
+                'confidence': 0.0,
+                'model': 'error',
+                'rerank_score': base_score,
+                'source': 'base_only'
+            }
+    
+    def _construct_gpt_ranking_prompt(self, task: Dict[str, Any], base_score: float, base_explanation: str, mode: str) -> str:
+        """Construct GPT prompt for ranking explanation."""
+        task_content = task.get('content', 'No content')
+        task_priority = task.get('priority', 4)
+        task_due = task.get('due', {}).get('string', 'No due date') if task.get('due') else 'No due date'
+        task_labels = ', '.join(task.get('labels', [])) or 'No labels'
+        
+        prompt = f"""You are a productivity assistant analyzing task prioritization. 
+
+Task: {task_content}
+Priority: {task_priority} (1=highest, 4=lowest)
+Due: {task_due}
+Labels: {task_labels}
+Current mode: {mode}
+
+Base ranking score: {base_score:.3f}
+Base explanation: {base_explanation}
+
+Please provide:
+1. A human-readable explanation of why this task should be prioritized in {mode} mode
+2. Your confidence in this assessment (0.0-1.0)
+3. Whether the score should be adjusted (suggest new score 0.0-1.0 if needed)
+
+Respond in format:
+EXPLANATION: [your explanation]
+CONFIDENCE: [0.0-1.0]
+RERANK_SCORE: [original score or new score]
+"""
+        
+        return prompt
+    
+    def _parse_gpt_ranking_response(self, response: str, task: Dict[str, Any], base_score: float, base_explanation: str) -> Dict[str, Any]:
+        """Parse GPT ranking response into structured format."""
+        import re
+        
+        # Default values
+        result = {
+            'explanation': base_explanation,
+            'confidence': 0.5,
+            'model': self.config.get('model', 'gpt-3.5-turbo'),
+            'rerank_score': base_score,
+            'source': 'base_only'
+        }
+        
+        try:
+            # Extract explanation
+            explanation_match = re.search(r'EXPLANATION:\s*(.+?)(?=CONFIDENCE:|RERANK_SCORE:|$)', response, re.DOTALL)
+            if explanation_match:
+                result['explanation'] = explanation_match.group(1).strip()
+                result['source'] = 'gpt_enhanced'
+            
+            # Extract confidence
+            confidence_match = re.search(r'CONFIDENCE:\s*([0-9]*\.?[0-9]+)', response)
+            if confidence_match:
+                result['confidence'] = float(confidence_match.group(1))
+            
+            # Extract rerank score
+            rerank_match = re.search(r'RERANK_SCORE:\s*([0-9]*\.?[0-9]+)', response)
+            if rerank_match:
+                new_score = float(rerank_match.group(1))
+                # Only accept reasonable score adjustments (within 0.0-1.0 range)
+                if 0.0 <= new_score <= 1.0:
+                    result['rerank_score'] = new_score
+                    if abs(new_score - base_score) > 0.05:  # Significant change
+                        result['source'] = 'gpt_reranked'
+                    else:
+                        result['source'] = 'gpt_enhanced'
+        
+        except Exception as e:
+            if self.logger:
+                self.logger.warning(f"Error parsing GPT ranking response: {e}")
+        
+        return result
+    
+    def _get_mock_gpt_explanation(self, task: Dict[str, Any], base_score: float, base_explanation: str, mode: str) -> Dict[str, Any]:
+        """Generate mock GPT explanation for testing."""
+        content = task.get('content', '').lower()
+        
+        # Mock reasoning based on task content
+        if 'urgent' in content or 'critical' in content:
+            explanation = f"This task contains urgent indicators and should be prioritized in {mode} mode"
+            confidence = 0.9
+            rerank_score = min(base_score + 0.1, 1.0)
+            source = 'gpt_reranked'
+        elif 'meeting' in content:
+            explanation = f"Meeting tasks require coordination and should be prioritized in {mode} mode"
+            confidence = 0.8
+            rerank_score = base_score + 0.05
+            source = 'gpt_enhanced'
+        elif mode == 'work' and any(word in content for word in ['work', 'project', 'deadline']):
+            explanation = f"Work-related task aligns well with current {mode} mode"
+            confidence = 0.7
+            rerank_score = base_score + 0.03
+            source = 'gpt_enhanced'
+        else:
+            explanation = f"Standard task prioritization for {mode} mode"
+            confidence = 0.6
+            rerank_score = base_score
+            source = 'gpt_enhanced'
+        
+        return {
+            'explanation': explanation,
+            'confidence': confidence,
+            'model': 'mock',
+            'rerank_score': rerank_score,
+            'source': source
+        }
+    
     def _detect_mode(self) -> str:
         """
         Auto-detect current mode based on time and day.
