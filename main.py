@@ -1854,6 +1854,100 @@ def apply_today_markers(ranked_tasks, config, task_logger=None, dry_run=False, b
     return marked_count
 
 
+def refresh_today_section_dates(project_id, section_id, config, task_logger=None, dry_run=False, bulk_mode=False):
+    """
+    Update due dates to today for all tasks in Today section.
+    
+    Args:
+        project_id: Todoist project ID
+        section_id: Today section ID  
+        config: Ranking configuration containing today marker settings
+        task_logger: Logger for task operations
+        dry_run: If True, only simulate date updates
+        bulk_mode: Enable bulk processing rate limiting
+        
+    Returns:
+        int: Number of tasks with updated due dates
+    """
+    if not section_id:
+        return 0
+    
+    updated_count = 0
+    today_date = datetime.now().strftime('%Y-%m-%d')
+    
+    try:
+        # Get all tasks in Today section
+        response = requests.get(f"{TODOIST_API}/tasks?project_id={project_id}&section_id={section_id}", headers=HEADERS)
+        response.raise_for_status()
+        today_tasks = response.json()
+        
+        if not today_tasks:
+            if task_logger:
+                task_logger.info("TODAY_DATES_EMPTY: Today section is empty, no dates to refresh")
+            log_info("📅 Today section is empty - no dates to refresh")
+            return 0
+        
+        log_info(f"📅 Found {len(today_tasks)} tasks in Today section")
+        if task_logger:
+            task_logger.info(f"TODAY_DATES_FOUND: {len(today_tasks)} tasks in Today section")
+        
+        # Process each task in Today section
+        for task in today_tasks:
+            task_id = task.get('id')
+            task_content = task.get('content', 'No content')[:50]
+            current_due = task.get('due')
+            current_due_date = current_due.get('date') if current_due else None
+            
+            if not task_id:
+                continue
+            
+            # Skip if already has today's due date
+            if current_due_date == today_date:
+                if task_logger:
+                    task_logger.info(f"TODAY_DATE_SKIP: Task {task_id} already has today's due date")
+                continue
+            
+            if dry_run:
+                if task_logger:
+                    old_date_str = current_due_date or "no due date"
+                    task_logger.info(f"TODAY_DATE_DRY_RUN: Would update task {task_id} from '{old_date_str}' to '{today_date}'")
+                log_info(f"🧪 Would update: {task_content} → due today")
+                updated_count += 1
+            else:
+                # Update due date to today
+                try:
+                    update_data = {"due_string": "today"}
+                    response = requests.post(f"{TODOIST_API}/tasks/{task_id}", headers=HEADERS, json=update_data)
+                    
+                    if response.status_code == 200:
+                        updated_count += 1
+                        old_date_str = current_due_date or "no due date"
+                        if task_logger:
+                            task_logger.info(f"TODAY_DATE_UPDATED: Task {task_id} due date updated from '{old_date_str}' to today | Content: {task_content}")
+                        log_info(f"📅 Updated: {task_content} → due today")
+                    else:
+                        if task_logger:
+                            task_logger.error(f"TODAY_DATE_FAILED: Failed to update due date for task {task_id} (HTTP {response.status_code})")
+                        log_warning(f"❌ Failed to update due date for: {task_content}")
+                        
+                    # Rate limiting for bulk mode
+                    if bulk_mode:
+                        import time
+                        time.sleep(0.1)
+                        
+                except Exception as e:
+                    if task_logger:
+                        task_logger.error(f"TODAY_DATE_ERROR: Error updating due date for task {task_id}: {e}")
+                    log_warning(f"❌ Error updating {task_content}: {e}")
+                    
+    except Exception as e:
+        if task_logger:
+            task_logger.error(f"TODAY_DATES_ERROR: Error in refresh_today_section_dates: {e}")
+        log_warning(f"Failed to refresh today section dates: {e}")
+        
+    return updated_count
+
+
 def clear_today_section(project_id, section_id, config, task_logger=None, dry_run=False, bulk_mode=False):
     """
     Clear tasks from Today section by removing @today labels and moving back to backlog.
@@ -2027,6 +2121,7 @@ def main(test_mode=False):
     parser.add_argument("--generate-today", action="store_true", help="Generate today's prioritized task list using TaskSense ranking")
     parser.add_argument("--limit", type=int, default=3, help="Number of tasks to select for today (default: 3)")
     parser.add_argument("--refresh-today", action="store_true", help="Clear and regenerate today's task list")
+    parser.add_argument("--refresh-today-dates", action="store_true", help="Update due dates to today for all tasks in Today section")
     
     args, _ = parser.parse_known_args()
     
@@ -2092,6 +2187,85 @@ def main(test_mode=False):
                 log_error(f"❌ TaskSense error: {str(e)}")
         else:
             log_error("❌ TaskSense not available")
+        
+        return
+
+    # Handle --refresh-today-dates flag (standalone operation)
+    if args.refresh_today_dates:
+        from datetime import datetime
+        
+        if not TASKSENSE_AVAILABLE:
+            log_error("❌ TaskSense not available for Today section management")
+            return
+            
+        try:
+            # Initialize TaskSense for configuration
+            task_sense = TaskSense()
+            task_logger = setup_task_logging()
+            
+            log_info("📅 Refreshing due dates for Today section tasks")
+            task_logger.info("=== TODAY DATES REFRESH START ===")
+            
+            # Get project IDs from config
+            if args.project:
+                project_names = [name.strip().lower() for name in args.project.split(",")]
+            elif os.getenv("PROJECT_NAMES"):
+                env_projects_raw = os.getenv("PROJECT_NAMES")
+                project_names = [name.strip().lower() for name in env_projects_raw.split(",")]
+            else:
+                project_names = ["inbox"]
+            
+            # Get projects from API
+            projects_response = requests.get(f"{TODOIST_API}/projects", headers=HEADERS)
+            projects_response.raise_for_status()
+            all_projects = projects_response.json()
+            
+            target_projects = []
+            for project in all_projects:
+                if project["name"].lower() in project_names:
+                    target_projects.append(project)
+            
+            if not target_projects:
+                log_error(f"❌ No projects found matching: {', '.join(project_names)}")
+                return
+            
+            total_updated = 0
+            
+            # Process each project's Today section
+            for project in target_projects:
+                project_id = project["id"]
+                project_name = project["name"]
+                
+                # Find Today section
+                today_section_id = ensure_today_section_exists(project_id, task_sense.ranking_config, task_logger)
+                
+                if today_section_id:
+                    log_info(f"📂 Processing Today section in project: {project_name}")
+                    updated_count = refresh_today_section_dates(
+                        project_id, today_section_id, task_sense.ranking_config,
+                        task_logger, args.dry_run, args.bulk_mode
+                    )
+                    total_updated += updated_count
+                else:
+                    log_warning(f"⚠️  No Today section found in project: {project_name}")
+            
+            # Summary
+            if total_updated > 0:
+                if args.dry_run:
+                    log_info(f"🧪 DRY RUN: Would update {total_updated} tasks with today's due date", "yellow")
+                else:
+                    log_success(f"✅ Updated {total_updated} tasks with today's due date")
+                task_logger.info(f"TODAY_DATES_COMPLETE: Updated {total_updated} tasks")
+            else:
+                log_info("ℹ️  No tasks needed due date updates")
+                task_logger.info("TODAY_DATES_EMPTY: No tasks needed updates")
+            
+            task_logger.info("=== TODAY DATES REFRESH END ===")
+            
+        except Exception as e:
+            log_error(f"❌ Today dates refresh failed: {str(e)}")
+            if 'task_logger' in locals():
+                task_logger.error(f"TODAY_DATES_ERROR: {str(e)}")
         
         return
 
