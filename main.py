@@ -1685,6 +1685,297 @@ def update_task(task, title=None, url=None, labels_to_add=None, summary=None, dr
     return False
 
 
+def ensure_today_section_exists(project_id, config, task_logger=None):
+    """
+    Ensure Today section exists in the project, create if missing.
+    
+    Args:
+        project_id: Todoist project ID
+        config: Ranking configuration containing section settings
+        task_logger: Logger for task operations
+        
+    Returns:
+        str: Section ID if successful, None if failed
+    """
+    section_config = config.get('sections', {})
+    today_section_name = section_config.get('today_section', 'Today')
+    create_if_missing = section_config.get('create_if_missing', True)
+    
+    try:
+        # Check if Today section already exists
+        sections = get_project_sections(project_id, task_logger)
+        if today_section_name in sections:
+            section_id = sections[today_section_name]
+            if task_logger:
+                task_logger.info(f"TODAY_SECTION_EXISTS: Found existing '{today_section_name}' section (ID: {section_id})")
+            return section_id
+        
+        # Create Today section if missing and configured to do so
+        if create_if_missing:
+            section_id = create_section_if_missing_sync(today_section_name, project_id, task_logger)
+            if section_id:
+                if task_logger:
+                    task_logger.info(f"TODAY_SECTION_CREATED: Created '{today_section_name}' section (ID: {section_id})")
+                log_info(f"📁 Created 'Today' section in project")
+                return section_id
+            else:
+                if task_logger:
+                    task_logger.error(f"TODAY_SECTION_CREATE_FAILED: Failed to create '{today_section_name}' section")
+                return None
+        else:
+            if task_logger:
+                task_logger.warning(f"TODAY_SECTION_MISSING: '{today_section_name}' section not found and creation disabled")
+            return None
+            
+    except Exception as e:
+        if task_logger:
+            task_logger.error(f"TODAY_SECTION_ERROR: Error ensuring Today section exists: {e}")
+        log_warning(f"Failed to ensure Today section exists: {e}")
+        return None
+
+
+def apply_today_labels(ranked_tasks, config, task_logger=None, dry_run=False, bulk_mode=False):
+    """
+    Apply @today labels to ranked tasks.
+    
+    Args:
+        ranked_tasks: List of ranked task objects from TaskSense.rank()
+        config: Ranking configuration containing label settings
+        task_logger: Logger for task operations
+        dry_run: If True, only simulate label application
+        bulk_mode: Enable bulk processing rate limiting
+        
+    Returns:
+        int: Number of tasks successfully labeled
+    """
+    label_config = config.get('labels', {})
+    today_marker = label_config.get('today_marker', '@today')
+    
+    if not ranked_tasks:
+        return 0
+    
+    labeled_count = 0
+    
+    try:
+        # Get available labels to check if @today already exists
+        labels_response = requests.get(f"{TODOIST_API}/labels", headers=HEADERS)
+        labels_response.raise_for_status()
+        existing_labels = {label['name']: label['id'] for label in labels_response.json()}
+        
+        # Create @today label if it doesn't exist
+        today_label_id = existing_labels.get(today_marker)
+        if not today_label_id:
+            if not dry_run:
+                today_label_id = create_label_if_missing(today_marker, task_logger)
+                if not today_label_id:
+                    if task_logger:
+                        task_logger.error(f"TODAY_LABEL_CREATE_FAILED: Failed to create '{today_marker}' label")
+                    return 0
+            else:
+                if task_logger:
+                    task_logger.info(f"TODAY_LABEL_DRY_RUN: Would create '{today_marker}' label")
+        
+        # Apply @today label to each ranked task
+        for ranked_task in ranked_tasks:
+            task_data = ranked_task['task']
+            task_id = task_data.get('id')
+            task_content = task_data.get('content', 'No content')[:50]
+            
+            if not task_id:
+                continue
+                
+            # Check if task already has @today label
+            current_labels = set(task_data.get('labels', []))
+            if today_label_id and str(today_label_id) in current_labels:
+                if task_logger:
+                    task_logger.info(f"TODAY_LABEL_SKIP: Task {task_id} already has '{today_marker}' label")
+                continue
+            
+            if dry_run:
+                if task_logger:
+                    task_logger.info(f"TODAY_LABEL_DRY_RUN: Would apply '{today_marker}' to task {task_id}")
+                labeled_count += 1
+            else:
+                # Apply label via API
+                try:
+                    update_data = {"labels": list(current_labels) + [today_label_id]}
+                    response = requests.post(f"{TODOIST_API}/tasks/{task_id}", headers=HEADERS, json=update_data)
+                    
+                    if response.status_code == 200:
+                        labeled_count += 1
+                        if task_logger:
+                            task_logger.info(f"TODAY_LABEL_APPLIED: Applied '{today_marker}' to task {task_id} | Content: {task_content}")
+                    else:
+                        if task_logger:
+                            task_logger.error(f"TODAY_LABEL_FAILED: Failed to apply '{today_marker}' to task {task_id} (HTTP {response.status_code})")
+                            
+                    # Rate limiting for bulk mode
+                    if bulk_mode:
+                        import time
+                        time.sleep(0.1)
+                        
+                except Exception as e:
+                    if task_logger:
+                        task_logger.error(f"TODAY_LABEL_ERROR: Error applying '{today_marker}' to task {task_id}: {e}")
+                    
+    except Exception as e:
+        if task_logger:
+            task_logger.error(f"TODAY_LABELS_ERROR: Error in apply_today_labels: {e}")
+        log_warning(f"Failed to apply today labels: {e}")
+        
+    return labeled_count
+
+
+def clear_today_section(project_id, section_id, config, task_logger=None, dry_run=False, bulk_mode=False):
+    """
+    Clear tasks from Today section by removing @today labels and moving back to backlog.
+    
+    Args:
+        project_id: Todoist project ID
+        section_id: Today section ID  
+        config: Ranking configuration containing label settings
+        task_logger: Logger for task operations
+        dry_run: If True, only simulate clearing
+        bulk_mode: Enable bulk processing rate limiting
+        
+    Returns:
+        int: Number of tasks cleared from Today section
+    """
+    if not section_id:
+        return 0
+    
+    cleared_count = 0
+    
+    try:
+        # Get all tasks in Today section
+        response = requests.get(f"{TODOIST_API}/tasks?project_id={project_id}&section_id={section_id}", headers=HEADERS)
+        response.raise_for_status()
+        today_tasks = response.json()
+        
+        if not today_tasks:
+            if task_logger:
+                task_logger.info("TODAY_CLEAR_EMPTY: Today section is already empty")
+            return 0
+        
+        label_config = config.get('labels', {})
+        today_marker = label_config.get('today_marker', '@today')
+        
+        # Get @today label ID
+        labels_response = requests.get(f"{TODOIST_API}/labels", headers=HEADERS)
+        labels_response.raise_for_status()
+        existing_labels = {label['name']: label['id'] for label in labels_response.json()}
+        today_label_id = existing_labels.get(today_marker)
+        
+        for task in today_tasks:
+            task_id = task.get('id')
+            task_content = task.get('content', 'No content')[:50]
+            
+            if not task_id:
+                continue
+            
+            if dry_run:
+                if task_logger:
+                    task_logger.info(f"TODAY_CLEAR_DRY_RUN: Would clear task {task_id} from Today section | Content: {task_content}")
+                cleared_count += 1
+            else:
+                try:
+                    # Remove @today label if present
+                    current_labels = set(task.get('labels', []))
+                    if today_label_id and str(today_label_id) in current_labels:
+                        new_labels = [label for label in current_labels if str(label) != str(today_label_id)]
+                        update_data = {"labels": new_labels}
+                        label_response = requests.post(f"{TODOIST_API}/tasks/{task_id}", headers=HEADERS, json=update_data)
+                        
+                        if label_response.status_code != 200:
+                            if task_logger:
+                                task_logger.error(f"TODAY_CLEAR_LABEL_FAILED: Failed to remove @today label from task {task_id}")
+                    
+                    # Move task out of Today section (back to no section/backlog)
+                    move_data = {"section_id": None}
+                    move_response = requests.post(f"{TODOIST_API}/tasks/{task_id}", headers=HEADERS, json=move_data)
+                    
+                    if move_response.status_code == 200:
+                        cleared_count += 1
+                        if task_logger:
+                            task_logger.info(f"TODAY_CLEAR_SUCCESS: Cleared task {task_id} from Today section | Content: {task_content}")
+                    else:
+                        if task_logger:
+                            task_logger.error(f"TODAY_CLEAR_MOVE_FAILED: Failed to move task {task_id} out of Today section")
+                    
+                    # Rate limiting for bulk mode
+                    if bulk_mode:
+                        import time
+                        time.sleep(0.1)
+                        
+                except Exception as e:
+                    if task_logger:
+                        task_logger.error(f"TODAY_CLEAR_ERROR: Error clearing task {task_id}: {e}")
+        
+        if cleared_count > 0:
+            if task_logger:
+                task_logger.info(f"TODAY_CLEAR_COMPLETE: Cleared {cleared_count} tasks from Today section")
+        
+    except Exception as e:
+        if task_logger:
+            task_logger.error(f"TODAY_CLEAR_ERROR: Error clearing Today section: {e}")
+        log_warning(f"Failed to clear Today section: {e}")
+    
+    return cleared_count
+
+
+def move_tasks_to_today_section(ranked_tasks, project_id, section_id, task_logger=None, dry_run=False, bulk_mode=False):
+    """
+    Move ranked tasks to Today section.
+    
+    Args:
+        ranked_tasks: List of ranked task objects from TaskSense.rank()
+        project_id: Todoist project ID  
+        section_id: Today section ID
+        task_logger: Logger for task operations
+        dry_run: If True, only simulate task movement
+        bulk_mode: Enable bulk processing rate limiting
+        
+    Returns:
+        int: Number of tasks successfully moved
+    """
+    if not ranked_tasks or not section_id:
+        return 0
+    
+    moved_count = 0
+    
+    for ranked_task in ranked_tasks:
+        task_data = ranked_task['task']
+        task_id = task_data.get('id')
+        task_content = task_data.get('content', 'No content')[:50]
+        current_section = task_data.get('section_id')
+        
+        if not task_id:
+            continue
+            
+        # Skip if task is already in Today section
+        if current_section == section_id:
+            if task_logger:
+                task_logger.info(f"TODAY_MOVE_SKIP: Task {task_id} already in Today section")
+            continue
+        
+        if dry_run:
+            if task_logger:
+                task_logger.info(f"TODAY_MOVE_DRY_RUN: Would move task {task_id} to Today section | Content: {task_content}")
+            moved_count += 1
+        else:
+            # Move task to Today section
+            success = move_task_to_section(task_id, section_id, task_logger, task_content, bulk_mode)
+            if success:
+                moved_count += 1
+                if task_logger:
+                    task_logger.info(f"TODAY_MOVE_SUCCESS: Moved task {task_id} to Today section | Content: {task_content}")
+            else:
+                if task_logger:
+                    task_logger.error(f"TODAY_MOVE_FAILED: Failed to move task {task_id} to Today section")
+    
+    return moved_count
+
+
 def main(test_mode=False):
     summary = TaskSummary()
     task_logger = setup_task_logging()
@@ -1981,17 +2272,72 @@ def main(test_mode=False):
                                 print(f"  {i}. [{score:.2f}] {task_content}")
                                 print(f"      💡 {explanation}")
                         
-                        # TODO: Add Today section management here in future
-                        # This would include:
-                        # - ensure_today_section_exists()
-                        # - move_tasks_to_today_section()  
-                        # - apply_today_labels()
+                        # Today section management
+                        today_section_id = None
+                        labeled_count = 0
+                        moved_count = 0
                         
+                        # Get project ID from first ranked task
+                        if ranked_tasks:
+                            project_id = ranked_tasks[0]['task'].get('project_id')
+                            if project_id:
+                                # Ensure Today section exists
+                                today_section_id = ensure_today_section_exists(project_id, task_sense.ranking_config, task_logger)
+                                
+                                if today_section_id:
+                                    # Clear Today section if refresh requested
+                                    if args.refresh_today:
+                                        cleared_count = clear_today_section(
+                                            project_id, today_section_id, task_sense.ranking_config,
+                                            task_logger, args.dry_run, args.bulk_mode
+                                        )
+                                        if cleared_count > 0:
+                                            if args.dry_run:
+                                                log_info(f"🧪 DRY RUN: Would clear {cleared_count} existing tasks from Today section", "yellow")
+                                            else:
+                                                log_info(f"🧹 Cleared {cleared_count} existing tasks from Today section")
+                                            task_logger.info(f"TODAY_REFRESH: Cleared {cleared_count} tasks from Today section")
+                                        else:
+                                            log_info("🧹 Today section was already empty")
+                                
+                                    # Move tasks to Today section
+                                    moved_count = move_tasks_to_today_section(
+                                        ranked_tasks, project_id, today_section_id, 
+                                        task_logger, args.dry_run, args.bulk_mode
+                                    )
+                                    
+                                    # Apply @today labels
+                                    labeled_count = apply_today_labels(
+                                        ranked_tasks, task_sense.ranking_config,
+                                        task_logger, args.dry_run, args.bulk_mode
+                                    )
+                                else:
+                                    log_warning("⚠️  Could not create/find Today section, skipping section management")
+                                    task_logger.warning("TODAY_SECTION_UNAVAILABLE: Skipping section and label management")
+                            else:
+                                log_warning("⚠️  No project ID found in ranked tasks")
+                                task_logger.warning("TODAY_NO_PROJECT_ID: Cannot perform section management without project ID")
+                        
+                        # Final success message
                         if not args.dry_run:
-                            log_success(f"✅ Selected {len(ranked_tasks)} tasks for today's focus")
-                            task_logger.info(f"RANKING_COMPLETE: Selected {len(ranked_tasks)} tasks")
+                            success_parts = [f"Selected {len(ranked_tasks)} tasks for today's focus"]
+                            if moved_count > 0:
+                                success_parts.append(f"moved {moved_count} to Today section")
+                            if labeled_count > 0:
+                                success_parts.append(f"applied @today to {labeled_count} tasks")
+                            
+                            success_msg = "✅ " + ", ".join(success_parts)
+                            log_success(success_msg)
+                            task_logger.info(f"RANKING_COMPLETE: Selected={len(ranked_tasks)}, Moved={moved_count}, Labeled={labeled_count}")
                         else:
-                            log_info(f"🧪 DRY RUN: Would select {len(ranked_tasks)} tasks for today", "yellow")
+                            dry_run_parts = [f"Would select {len(ranked_tasks)} tasks for today"]
+                            if moved_count > 0:
+                                dry_run_parts.append(f"move {moved_count} to Today section")
+                            if labeled_count > 0:
+                                dry_run_parts.append(f"apply @today to {labeled_count} tasks")
+                            
+                            dry_run_msg = "🧪 DRY RUN: " + ", ".join(dry_run_parts)
+                            log_info(dry_run_msg, "yellow")
                     else:
                         log_info("ℹ️  No tasks qualified for today's ranking")
                         task_logger.info("RANKING_EMPTY: No tasks qualified for ranking")
