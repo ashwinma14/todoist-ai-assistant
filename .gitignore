@@ -12,3 +12,6 @@ settings.json
 task_sense_config.json
 rules.json
 ranking_config.json
+
+# macOS system files
+.DS_Store
