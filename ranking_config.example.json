@@ -1,6 +1,7 @@
 {
   "_comment": "Copy this file to ranking_config.json and customize for your workflow",
   "_description": "Configuration for TaskSense ranking engine - prioritizes backlog tasks into Today list",
+  "_usage": "Run: python main.py --generate-today --mode=work --limit=3",
   "version": "4.0",
   "default_limit": 3,
   "scoring_weights": {
@@ -32,16 +33,19 @@
     "future": 0.2
   },
   "mode_settings": {
-    "_comment": "Mode-specific settings for work, personal, weekend, evening",
+    "_comment": "Mode-specific settings for work, personal, weekend, evening with custom weights and filters",
     "work": {
+      "_description": "Weekday work hours - prioritize urgent business tasks",
+      "_filter_comment": "Optional Todoist filter queries to pre-filter tasks (improves performance)",
       "filters": [
         "overdue & !@today",
-        "(p1 | p2) & 7 days & !@today",
+        "(p1 | p2) & 7 days & !@today", 
         "@work & !@today"
       ],
-      "preferred_labels": ["work", "meeting", "urgent", "bug"],
-      "excluded_labels": ["personal", "shopping", "health"],
+      "preferred_labels": ["work", "meeting", "urgent", "bug", "project"],
+      "excluded_labels": ["personal", "shopping", "health", "home"],
       "weights": {
+        "_comment": "Higher priority weight for work mode",
         "priority": 0.5,
         "due_date": 0.3,
         "age": 0.05,
@@ -49,18 +53,54 @@
       }
     },
     "personal": {
+      "_description": "Personal time - focus on health, family, and personal development",
       "filters": [
         "@personal & !@today",
         "overdue & @personal",
         "@health & !@today"
       ],
-      "preferred_labels": ["personal", "health", "family", "home"],
-      "excluded_labels": ["work", "meeting"],
+      "preferred_labels": ["personal", "health", "family", "home", "admin"],
+      "excluded_labels": ["work", "meeting", "project"],
       "weights": {
+        "_comment": "Higher due date weight for personal mode",
         "priority": 0.3,
         "due_date": 0.4,
         "age": 0.1,
         "label_preference": 0.2
+      }
+    },
+    "weekend": {
+      "_description": "Weekend time - balance personal projects with relaxation",
+      "filters": [
+        "@personal & !@today",
+        "@home & !@today",
+        "@family & !@today"
+      ],
+      "preferred_labels": ["personal", "home", "family", "health", "reading", "hobby"],
+      "excluded_labels": ["work", "meeting", "urgent"],
+      "weights": {
+        "_comment": "Lower priority emphasis, higher label preference for weekend activities",
+        "priority": 0.2,
+        "due_date": 0.3,
+        "age": 0.2,
+        "label_preference": 0.3
+      }
+    },
+    "evening": {
+      "_description": "Evening hours - admin tasks, light personal work, planning",
+      "filters": [
+        "@personal & !@today",
+        "@admin & !@today",
+        "@reading & !@today"
+      ],
+      "preferred_labels": ["personal", "admin", "home", "family", "reading", "planning"],
+      "excluded_labels": ["work", "meeting"],
+      "weights": {
+        "_comment": "Balanced approach with emphasis on due dates and label matching",
+        "priority": 0.25,
+        "due_date": 0.35,
+        "age": 0.15,
+        "label_preference": 0.25
       }
     }
   },

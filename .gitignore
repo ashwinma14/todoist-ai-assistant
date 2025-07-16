@@ -11,3 +11,4 @@ settings.json
 # Personal configuration files (use .example.json templates)
 task_sense_config.json
 rules.json
+ranking_config.json
