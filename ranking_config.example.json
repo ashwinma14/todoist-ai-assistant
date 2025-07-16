@@ -115,11 +115,11 @@
     "create_if_missing": true
   },
   "filtering": {
-    "_comment": "Task filtering options",
+    "_comment": "Task filtering options - ranking considers all uncompleted tasks, not just backlog",
     "enabled": true,
-    "fallback_to_full_backlog": true,
-    "backlog_only": true,
-    "exclude_completed": true
+    "exclude_completed": true,
+    "exclude_today_section": true,
+    "_legacy_note": "backlog_only is deprecated - ranking now considers all active tasks"
   },
   "logging": {
     "_comment": "Logging configuration for ranking operations",

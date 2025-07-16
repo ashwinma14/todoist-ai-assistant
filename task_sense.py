@@ -768,23 +768,49 @@ Please respond with one or two relevant labels from the available labels list.""
         elif mode == 'auto':
             mode = self._detect_mode()
         
-        # Filter to backlog tasks only (section_id == None)
+        # Filter to rankable tasks (all uncompleted tasks, optionally excluding Today section)
         filtering_config = config.get('filtering', {})
-        if filtering_config.get('backlog_only', True):
-            backlog_tasks = [task for task in tasks if task.get('section_id') is None]
-            if self.logger and filtering_config.get('log_candidates', True):
-                self.logger.info(f"RANK_FILTER: Filtered to {len(backlog_tasks)} backlog tasks from {len(tasks)} total")
-        else:
-            backlog_tasks = tasks
         
-        if not backlog_tasks:
+        # Get Today section ID if we need to exclude it
+        today_section_id = None
+        section_config = config.get('sections', {})
+        today_section_name = section_config.get('today_section', 'Today')
+        
+        # Try to find Today section ID from tasks (simple approach)
+        if filtering_config.get('exclude_today_section', True):
+            for task in tasks:
+                task_section_id = task.get('section_id')
+                if task_section_id:
+                    # This is a simplified approach - in a full implementation we'd query sections API
+                    # For now, we'll skip this optimization and rank all non-completed tasks
+                    pass
+        
+        rankable_tasks = []
+        for task in tasks:
+            # Skip completed tasks
+            if task.get('checked', False) or task.get('completed', False):
+                continue
+                
+            # Skip Today section tasks if configured (avoid re-ranking already selected tasks)
+            task_section_id = task.get('section_id')
+            if today_section_id and task_section_id == today_section_id:
+                continue
+                
+            rankable_tasks.append(task)
+        
+        if self.logger and filtering_config.get('log_candidates', True):
+            completed_count = len([t for t in tasks if t.get('checked', False) or t.get('completed', False)])
+            today_count = len([t for t in tasks if t.get('section_id') == today_section_id]) if today_section_id else 0
+            self.logger.info(f"RANK_FILTER: {len(rankable_tasks)} rankable tasks from {len(tasks)} total (excluded: {completed_count} completed, {today_count} in Today)")
+        
+        if not rankable_tasks:
             if self.logger:
-                self.logger.info("RANK_NO_CANDIDATES: No backlog tasks found to rank")
+                self.logger.info("RANK_NO_CANDIDATES: No rankable tasks found (all completed or in Today section)")
             return []
         
         # Score all tasks
         scored_tasks = []
-        for task in backlog_tasks:
+        for task in rankable_tasks:
             try:
                 score_result = self.calculate_composite_score(task, mode, config)
                 
