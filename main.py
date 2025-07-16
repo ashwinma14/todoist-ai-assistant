@@ -2507,16 +2507,25 @@ def main(test_mode=False):
                                     if task_logger:
                                         task_logger.info(f"SECTION_SKIP: Task {task['id']} already in target section {section_name}")
                                 else:
-                                    move_success = move_task_to_section(task['id'], section_id, task_logger, task['content'], args.bulk_mode)
-                                    if move_success:
-                                        if args.verbose:
-                                            log_success(f"📁 Moved task to section: {section_name}")
-                                        log_task_action(task_logger, task['id'], task['content'], "MOVED_TO_SECTION",
-                                                      section=section_name, priority=selected_section['priority'], 
-                                                      rule_source=selected_section['label'])
+                                    # Check if task is in Today section - if so, don't move it
+                                    sections = get_project_sections(project_id, task_logger)
+                                    today_section_id = sections.get('Today')
+                                    if today_section_id and current_section == today_section_id:
+                                        if task_logger:
+                                            task_logger.info(f"TODAY_SECTION_PROTECTED: Task {task['id']} is in Today section, skipping move to {section_name}")
+                                        log_task_action(task_logger, task['id'], task['content'], "TODAY_SECTION_PROTECTED",
+                                                      section=section_name, note="Task in Today section, move skipped")
                                     else:
-                                        log_task_action(task_logger, task['id'], task['content'], "MOVE_FAILED",
-                                                      error=f"Failed to move to section: {section_name}")
+                                        move_success = move_task_to_section(task['id'], section_id, task_logger, task['content'], args.bulk_mode)
+                                        if move_success:
+                                            if args.verbose:
+                                                log_success(f"📁 Moved task to section: {section_name}")
+                                            log_task_action(task_logger, task['id'], task['content'], "MOVED_TO_SECTION",
+                                                          section=section_name, priority=selected_section['priority'], 
+                                                          rule_source=selected_section['label'])
+                                        else:
+                                            log_task_action(task_logger, task['id'], task['content'], "MOVE_FAILED",
+                                                          error=f"Failed to move to section: {section_name}")
                             else:
                                 log_task_action(task_logger, task['id'], task['content'], "SECTION_NOT_FOUND",
                                               error=f"Section '{section_name}' not found or could not be created")
@@ -2695,16 +2704,25 @@ def main(test_mode=False):
                                     if task_logger:
                                         task_logger.info(f"SECTION_SKIP: Task {task['id']} already in target section {section_name}")
                                 else:
-                                    move_success = move_task_to_section(task['id'], section_id, task_logger, task['content'], args.bulk_mode)
-                                    if move_success:
-                                        if args.verbose:
-                                            log_success(f"📂 Moved task to section: {section_name}")
-                                        log_task_action(task_logger, task['id'], task['content'], "MOVED_TO_SECTION",
-                                                      section=section_name, priority=selected_section['priority'], 
-                                                      rule_source=selected_section['label'])
+                                    # Check if task is in Today section - if so, don't move it
+                                    sections = get_project_sections(project_id, task_logger)
+                                    today_section_id = sections.get('Today')
+                                    if today_section_id and current_section == today_section_id:
+                                        if task_logger:
+                                            task_logger.info(f"TODAY_SECTION_PROTECTED: Task {task['id']} is in Today section, skipping move to {section_name}")
+                                        log_task_action(task_logger, task['id'], task['content'], "TODAY_SECTION_PROTECTED",
+                                                      section=section_name, note="Task in Today section, move skipped")
                                     else:
-                                        log_task_action(task_logger, task['id'], task['content'], "MOVE_FAILED",
-                                                      error=f"Failed to move to section: {section_name}")
+                                        move_success = move_task_to_section(task['id'], section_id, task_logger, task['content'], args.bulk_mode)
+                                        if move_success:
+                                            if args.verbose:
+                                                log_success(f"📂 Moved task to section: {section_name}")
+                                            log_task_action(task_logger, task['id'], task['content'], "MOVED_TO_SECTION",
+                                                          section=section_name, priority=selected_section['priority'], 
+                                                          rule_source=selected_section['label'])
+                                        else:
+                                            log_task_action(task_logger, task['id'], task['content'], "MOVE_FAILED",
+                                                          error=f"Failed to move to section: {section_name}")
                             else:
                                 log_task_action(task_logger, task['id'], task['content'], "SECTION_NOT_FOUND",
                                               error=f"Section '{section_name}' not found or could not be created")
@@ -2733,15 +2751,24 @@ def main(test_mode=False):
                                     if task_logger:
                                         task_logger.info(f"SECTION_SKIP: Task {task['id']} already in target section {section_name}")
                                 else:
-                                    move_success = move_task_to_section(task['id'], section_id, task_logger, task['content'], args.bulk_mode)
-                                    if move_success:
-                                        if args.verbose:
-                                            log_success(f"📂 Moved task to section: {section_name}")
-                                        log_task_action(task_logger, task['id'], task['content'], "MOVED_TO_SECTION",
-                                                      section=section_name, rule_source=section_info['rule_source'])
+                                    # Check if task is in Today section - if so, don't move it
+                                    sections = get_project_sections(project_id, task_logger)
+                                    today_section_id = sections.get('Today')
+                                    if today_section_id and current_section == today_section_id:
+                                        if task_logger:
+                                            task_logger.info(f"TODAY_SECTION_PROTECTED: Task {task['id']} is in Today section, skipping move to {section_name}")
+                                        log_task_action(task_logger, task['id'], task['content'], "TODAY_SECTION_PROTECTED",
+                                                      section=section_name, note="Task in Today section, move skipped")
                                     else:
-                                        log_task_action(task_logger, task['id'], task['content'], "MOVE_FAILED",
-                                                      error=f"Failed to move to section {section_name}")
+                                        move_success = move_task_to_section(task['id'], section_id, task_logger, task['content'], args.bulk_mode)
+                                        if move_success:
+                                            if args.verbose:
+                                                log_success(f"📂 Moved task to section: {section_name}")
+                                            log_task_action(task_logger, task['id'], task['content'], "MOVED_TO_SECTION",
+                                                          section=section_name, rule_source=section_info['rule_source'])
+                                        else:
+                                            log_task_action(task_logger, task['id'], task['content'], "MOVE_FAILED",
+                                                          error=f"Failed to move to section {section_name}")
                             else:
                                 log_task_action(task_logger, task['id'], task['content'], "SECTION_NOT_FOUND",
                                               reason=f"Section '{section_name}' not found and create_if_missing=False")
