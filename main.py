@@ -1743,48 +1743,48 @@ def ensure_today_section_exists(project_id, config, task_logger=None):
         return None
 
 
-def apply_today_labels(ranked_tasks, config, task_logger=None, dry_run=False, bulk_mode=False):
+def apply_today_markers(ranked_tasks, config, task_logger=None, dry_run=False, bulk_mode=False):
     """
-    Apply @today labels to ranked tasks.
+    Apply today markers to ranked tasks (due date = today + optional label).
     
     Args:
         ranked_tasks: List of ranked task objects from TaskSense.rank()
-        config: Ranking configuration containing label settings
+        config: Ranking configuration containing today marker settings
         task_logger: Logger for task operations
-        dry_run: If True, only simulate label application
+        dry_run: If True, only simulate marker application
         bulk_mode: Enable bulk processing rate limiting
         
     Returns:
-        int: Number of tasks successfully labeled
+        int: Number of tasks successfully marked
     """
-    label_config = config.get('labels', {})
-    today_marker = label_config.get('today_marker', '@today')
+    today_config = config.get('today_markers', {})
+    use_due_date = today_config.get('use_due_date', True)
+    use_label = today_config.get('use_label', False)
+    today_marker = today_config.get('label_name', '@today')
     
     if not ranked_tasks:
         return 0
     
-    labeled_count = 0
+    marked_count = 0
+    today_date = datetime.now().strftime('%Y-%m-%d')
     
     try:
-        # Get available labels to check if @today already exists
-        labels_response = requests.get(f"{TODOIST_API}/labels", headers=HEADERS)
-        labels_response.raise_for_status()
-        existing_labels = {label['name']: label['id'] for label in labels_response.json()}
-        
-        # Create @today label if it doesn't exist
-        today_label_id = existing_labels.get(today_marker)
-        if not today_label_id:
-            if not dry_run:
+        # Get today label ID if we're using labels
+        today_label_id = None
+        if use_label:
+            labels_response = requests.get(f"{TODOIST_API}/labels", headers=HEADERS)
+            labels_response.raise_for_status()
+            existing_labels = {label['name']: label['id'] for label in labels_response.json()}
+            
+            today_label_id = existing_labels.get(today_marker)
+            if not today_label_id and not dry_run:
                 today_label_id = create_label_if_missing(today_marker, task_logger)
                 if not today_label_id:
                     if task_logger:
                         task_logger.error(f"TODAY_LABEL_CREATE_FAILED: Failed to create '{today_marker}' label")
-                    return 0
-            else:
-                if task_logger:
-                    task_logger.info(f"TODAY_LABEL_DRY_RUN: Would create '{today_marker}' label")
+                    use_label = False  # Continue without labels
         
-        # Apply @today label to each ranked task
+        # Apply today markers to each ranked task
         for ranked_task in ranked_tasks:
             task_data = ranked_task['task']
             task_id = task_data.get('id')
@@ -1792,31 +1792,50 @@ def apply_today_labels(ranked_tasks, config, task_logger=None, dry_run=False, bu
             
             if not task_id:
                 continue
-                
-            # Check if task already has @today label
+            
+            # Check current state
+            current_due = task_data.get('due')
+            current_due_date = current_due.get('date') if current_due else None
             current_labels = set(task_data.get('labels', []))
-            if today_label_id and str(today_label_id) in current_labels:
+            
+            # Determine what updates are needed
+            updates_needed = {}
+            actions_taken = []
+            
+            # 1. Set due date to today if enabled and not already set
+            if use_due_date and current_due_date != today_date:
+                updates_needed['due_string'] = 'today'
+                actions_taken.append('due_date')
+            
+            # 2. Add @today label if enabled and not already present
+            if use_label and today_label_id and str(today_label_id) not in current_labels:
+                updates_needed['labels'] = list(current_labels) + [today_label_id]
+                actions_taken.append('label')
+            
+            # Skip if no updates needed
+            if not updates_needed:
                 if task_logger:
-                    task_logger.info(f"TODAY_LABEL_SKIP: Task {task_id} already has '{today_marker}' label")
+                    task_logger.info(f"TODAY_MARKER_SKIP: Task {task_id} already marked for today")
                 continue
             
             if dry_run:
                 if task_logger:
-                    task_logger.info(f"TODAY_LABEL_DRY_RUN: Would apply '{today_marker}' to task {task_id}")
-                labeled_count += 1
+                    actions_str = '+'.join(actions_taken)
+                    task_logger.info(f"TODAY_MARKER_DRY_RUN: Would apply {actions_str} to task {task_id}")
+                marked_count += 1
             else:
-                # Apply label via API
+                # Apply updates via API
                 try:
-                    update_data = {"labels": list(current_labels) + [today_label_id]}
-                    response = requests.post(f"{TODOIST_API}/tasks/{task_id}", headers=HEADERS, json=update_data)
+                    response = requests.post(f"{TODOIST_API}/tasks/{task_id}", headers=HEADERS, json=updates_needed)
                     
                     if response.status_code == 200:
-                        labeled_count += 1
+                        marked_count += 1
+                        actions_str = '+'.join(actions_taken)
                         if task_logger:
-                            task_logger.info(f"TODAY_LABEL_APPLIED: Applied '{today_marker}' to task {task_id} | Content: {task_content}")
+                            task_logger.info(f"TODAY_MARKER_APPLIED: Applied {actions_str} to task {task_id} | Content: {task_content}")
                     else:
                         if task_logger:
-                            task_logger.error(f"TODAY_LABEL_FAILED: Failed to apply '{today_marker}' to task {task_id} (HTTP {response.status_code})")
+                            task_logger.error(f"TODAY_MARKER_FAILED: Failed to apply today markers to task {task_id} (HTTP {response.status_code})")
                             
                     # Rate limiting for bulk mode
                     if bulk_mode:
@@ -1825,14 +1844,14 @@ def apply_today_labels(ranked_tasks, config, task_logger=None, dry_run=False, bu
                         
                 except Exception as e:
                     if task_logger:
-                        task_logger.error(f"TODAY_LABEL_ERROR: Error applying '{today_marker}' to task {task_id}: {e}")
+                        task_logger.error(f"TODAY_MARKER_ERROR: Error applying today markers to task {task_id}: {e}")
                     
     except Exception as e:
         if task_logger:
-            task_logger.error(f"TODAY_LABELS_ERROR: Error in apply_today_labels: {e}")
-        log_warning(f"Failed to apply today labels: {e}")
+            task_logger.error(f"TODAY_MARKERS_ERROR: Error in apply_today_markers: {e}")
+        log_warning(f"Failed to apply today markers: {e}")
         
-    return labeled_count
+    return marked_count
 
 
 def clear_today_section(project_id, section_id, config, task_logger=None, dry_run=False, bulk_mode=False):
@@ -2315,8 +2334,8 @@ def main(test_mode=False):
                                         task_logger, args.dry_run, args.bulk_mode
                                     )
                                     
-                                    # Apply @today labels
-                                    labeled_count = apply_today_labels(
+                                    # Apply today markers (due date + optional label)
+                                    labeled_count = apply_today_markers(
                                         ranked_tasks, task_sense.ranking_config,
                                         task_logger, args.dry_run, args.bulk_mode
                                     )
@@ -2333,7 +2352,7 @@ def main(test_mode=False):
                             if moved_count > 0:
                                 success_parts.append(f"moved {moved_count} to Today section")
                             if labeled_count > 0:
-                                success_parts.append(f"applied @today to {labeled_count} tasks")
+                                success_parts.append(f"marked {labeled_count} for today")
                             
                             success_msg = "✅ " + ", ".join(success_parts)
                             log_success(success_msg)
@@ -2343,7 +2362,7 @@ def main(test_mode=False):
                             if moved_count > 0:
                                 dry_run_parts.append(f"move {moved_count} to Today section")
                             if labeled_count > 0:
-                                dry_run_parts.append(f"apply @today to {labeled_count} tasks")
+                                dry_run_parts.append(f"mark {labeled_count} for today")
                             
                             dry_run_msg = "🧪 DRY RUN: " + ", ".join(dry_run_parts)
                             log_info(dry_run_msg, "yellow")

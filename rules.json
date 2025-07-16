@@ -75,14 +75,14 @@
       "label": "personal",
       "move_to": "Personal",
       "create_if_missing": true,
-      "priority": 11
+      "priority": 10
     },
     {
       "contains": ["deck", "presentation", "jira", "pull request", "customer", "stakeholder", "report", "project"],
       "label": "work",
       "move_to": "Work",
       "create_if_missing": true,
-      "priority": 10
+      "priority": 11
     }
   ],
   "gpt_fallback": {

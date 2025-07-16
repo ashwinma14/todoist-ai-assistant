@@ -104,8 +104,15 @@
       }
     }
   },
+  "today_markers": {
+    "_comment": "How to mark tasks as 'today' - due date is most natural, labels optional",
+    "use_due_date": true,
+    "use_label": false,
+    "label_name": "@today",
+    "_explanation": "use_due_date=true sets due date to today (shows in Today view naturally)"
+  },
   "labels": {
-    "_comment": "Label management for ranking system",
+    "_comment": "Legacy label configuration (replaced by today_markers)",
     "today_marker": "@today",
     "feedback_labels": ["@today-done", "@today-skip", "@rank-ignore"]
   },
