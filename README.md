@@ -1,8 +1,6 @@
 # Todoist AI Assistant
 
-The Todoist AI Assistant is an intelligent, context-aware automation system that transforms your [Todoist](https://todoist.com) into a clean, actionable workspace.  
-Powered by the **TaskSense AI Engine**, it labels, organizes, and prioritizes your tasks — adapting to your personal work patterns and helping you focus on what matters most.  
-All while maintaining transparency, configurability, and reliability.
+The Todoist AI Assistant is an intelligent, context-aware automation system that transforms your [Todoist](https://todoist.com) into a clean, actionable workspace. Powered by the **TaskSense AI Engine**, it labels, organizes, and prioritizes your tasks — adapting to your personal work patterns and helping you focus on what matters most. All while maintaining transparency, configurability, and reliability.
 
 ---
 
