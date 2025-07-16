@@ -601,6 +601,7 @@ def get_gpt_labels(content, gpt_config, task_logger=None, task_id=None):
         # Try OpenAI package first, fallback to direct requests
         if OPENAI_AVAILABLE:
             try:
+                # Initialize OpenAI client with defensive error handling
                 client = OpenAI(api_key=os.environ.get('OPENAI_API_KEY'))
                 response = client.chat.completions.create(
                     model=gpt_config.get('model', 'gpt-3.5-turbo'),
@@ -619,9 +620,17 @@ def get_gpt_labels(content, gpt_config, task_logger=None, task_id=None):
                     
                     return labels[:2]
                     
+            except TypeError as e:
+                # Handle potential version-specific errors like unexpected keyword arguments
+                if "proxies" in str(e) or "unexpected keyword argument" in str(e):
+                    if task_logger and task_id:
+                        task_logger.warning(f"Task {task_id} | GPT_CLIENT_INIT_ERROR (likely version mismatch): {str(e)}, falling back to HTTP")
+                else:
+                    if task_logger and task_id:
+                        task_logger.warning(f"Task {task_id} | GPT_TYPE_ERROR: {str(e)}, falling back to HTTP")
             except Exception as e:
                 if task_logger and task_id:
-                    task_logger.warning(f"Task {task_id} | GPT_PACKAGE_ERROR: {str(e)}, falling back to direct HTTP")
+                    task_logger.warning(f"Task {task_id} | GPT_PACKAGE_ERROR: {str(e)}, falling back to HTTP")
         
         # Fallback to direct HTTP requests
         url = "https://api.openai.com/v1/chat/completions"

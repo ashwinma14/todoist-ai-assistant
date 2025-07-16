@@ -50,13 +50,25 @@ class TaskSense:
         self.version = "v1.0"
         self.source = "TaskSense"
         
-        # Load configurations
+        # Load configurations with environment variable support
         self.config = self._load_config(config_path)
+        
+        # Support RANKING_CONFIG_PATH environment variable (optional for deployment)
+        ranking_config_env_path = os.environ.get('RANKING_CONFIG_PATH')
+        if ranking_config_env_path:
+            ranking_config_path = ranking_config_env_path
+            
         self.ranking_config = self._load_ranking_config(ranking_config_path)
         self.prompts = TaskSensePrompts() if PROMPTS_AVAILABLE else None
         
     def _load_config(self, config_path: str) -> Dict[str, Any]:
         """Load TaskSense configuration from JSON file."""
+        # Handle None config_path (fallback to default config)
+        if config_path is None:
+            if self.logger:
+                self.logger.info("TaskSense config_path is None, using default configuration")
+            return self._get_default_config()
+            
         try:
             with open(config_path, 'r') as f:
                 config = json.load(f)
@@ -91,6 +103,12 @@ class TaskSense:
     
     def _load_ranking_config(self, config_path: str) -> Dict[str, Any]:
         """Load ranking configuration from JSON file."""
+        # Handle None config_path (fallback to default config)
+        if config_path is None:
+            if self.logger:
+                self.logger.info("Ranking config_path is None, using default configuration")
+            return self._get_default_ranking_config()
+            
         try:
             with open(config_path, 'r') as f:
                 config = json.load(f)
@@ -255,6 +273,7 @@ Please respond with one or two relevant labels from the available labels list.""
         # Try OpenAI package first
         if OPENAI_AVAILABLE:
             try:
+                # Initialize OpenAI client with defensive error handling
                 client = OpenAI(api_key=os.environ.get('OPENAI_API_KEY'))
                 response = client.chat.completions.create(
                     model=model,
@@ -266,6 +285,14 @@ Please respond with one or two relevant labels from the available labels list.""
                 if response.choices and response.choices[0].message.content:
                     return response.choices[0].message.content.strip()
                     
+            except TypeError as e:
+                # Handle potential version-specific errors like unexpected keyword arguments
+                if "proxies" in str(e) or "unexpected keyword argument" in str(e):
+                    if self.logger:
+                        self.logger.warning(f"OpenAI client initialization error (likely version mismatch): {e}, falling back to HTTP")
+                else:
+                    if self.logger:
+                        self.logger.warning(f"OpenAI TypeError: {e}, falling back to HTTP")
             except Exception as e:
                 if self.logger:
                     self.logger.warning(f"OpenAI package error: {e}, falling back to HTTP")
