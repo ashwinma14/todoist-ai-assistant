@@ -5,6 +5,12 @@
 
 ---
 
+## 🔍 Additions from Phase 4 Step 2 Reflection
+
+The following tasks were identified during comprehensive reflection on the GPT-Enhanced Reranker implementation to improve architecture, testing, and user experience.
+
+---
+
 ## 🎯 Phase 4 Step 2 Prerequisites
 
 ### ⚠️ Critical for GPT-Enhanced Reranker
@@ -209,6 +215,59 @@
 4. **Unit testing** (parallel to Step 3 development)
 5. **SectionManager extraction** (refactor during Step 3)
 6. **Code quality improvements** (ongoing, as time permits)
+
+---
+
+## 🏗️ Architecture Improvements (From Phase 4 Step 2 Reflection)
+
+- [ ] **Extract GPTRerankingConfig class** 🟢 **(2–3 hours)**
+  - Centralize GPT reranking configuration logic into a dedicated class
+  - Improve readability and reduce duplication when passing configuration dictionaries
+  - See reflection suggestion: `GPTRerankingConfig`
+
+- [ ] **Extract CostTracker class** 🟢 **(2–3 hours)**
+  - Centralize cost tracking and limit checking logic into a reusable component
+  - Improve clarity around cost controls and reporting
+  - See reflection suggestion: `CostTracker`
+
+- [ ] **Abstract GPTResponseParser factory** 🟢 **(3 hours)**
+  - Use a strategy pattern to support multiple parsing strategies: JSON, regex fallback, default
+  - Makes response parsing extensible and easier to maintain
+
+---
+
+## 🧪 Testing & Mock Improvements (From Phase 4 Step 2 Reflection)
+
+- [ ] **Enhance mock GPT responses realism** 🟡 **(1–2 hours)**
+  - Improve variety and complexity of mock GPT responses in test fixtures
+  - Helps simulate more realistic edge cases during development and testing
+
+---
+
+## ⚡ Performance Optimization (Nice-to-Have)
+
+- [ ] **Batch Processing for GPT** 🔵 **(4 hours)**
+  - Investigate batching multiple tasks into a single GPT call
+  - Reduce API overhead and improve throughput
+
+- [ ] **Async/Await Processing** 🔵 **(4–5 hours)**
+  - Implement async GPT requests for better concurrency during large runs
+
+---
+
+## 🤖 Intelligence & UX Enhancements (Nice-to-Have)
+
+- [ ] **Feedback-Driven Learning System** 🔵 **(5–6 hours)**
+  - Track user acceptance/rejection of GPT recommendations to refine future suggestions
+
+- [ ] **Custom Prompt Templates** 🔵 **(3–4 hours)**
+  - Allow user-defined prompt templates for specific contexts (e.g., engineering, personal)
+
+- [ ] **Interactive Mode** 🔵 **(4–5 hours)**
+  - Prompt user to accept/reject GPT suggestions before applying them
+
+- [ ] **Visual Monitoring Dashboard** 🔵 **(8–10 hours)**
+  - Build a web-based dashboard to monitor GPT usage, costs, and effectiveness over time
 
 ---
 
