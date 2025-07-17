@@ -1,20 +1,47 @@
-venv/
-.env
-__pycache__/
-task_log.txt
-*.log
-.vscode/
-last_run.txt
-claude.md
-settings.json
-
 # Personal configuration files (use .example.json templates)
 task_sense_config.json
 rules.json
 ranking_config.json
+
+# Claude project context and development docs
+CLAUDE.md
+*_REFLECTION.md
+*_implementation_plan.md
+
+# Runtime files and logs
+last_run.txt
+task_log.txt
+*.log
+
+# Development environment files
+venv/
+.env
+__pycache__/
+.vscode/
+settings.json
 
 # macOS system files
 .DS_Store
 
 # Claude local configuration
 .claude/
+
+# Python cache and build artifacts
+*.pyc
+*.pyo
+*.pyd
+__pycache__/
+*.egg-info/
+build/
+dist/
+
+# IDE and editor files
+.idea/
+*.swp
+*.swo
+*~
+
+# Backup files
+*.bak
+*.backup
+*.tmp
