@@ -1,0 +1,86 @@
+{
+  "valid_json_responses": [
+    {
+      "input_task": "URGENT: Fix critical authentication bug",
+      "response": {
+        "explanation": "This task contains urgent indicators and critical system impact, requiring immediate prioritization",
+        "confidence": 0.95,
+        "rerank_score": 0.92,
+        "reasoning": "Authentication bugs affect all users and require immediate attention",
+        "urgency_indicators": ["urgent", "critical", "authentication"],
+        "mode_alignment": "high priority security issue",
+        "recommendation": "prioritize"
+      }
+    },
+    {
+      "input_task": "Schedule team meeting next week",
+      "response": {
+        "explanation": "Meeting scheduling requires coordination but is not urgent",
+        "confidence": 0.8,
+        "rerank_score": 0.65,
+        "reasoning": "Standard planning task with moderate priority",
+        "urgency_indicators": ["meeting"],
+        "mode_alignment": "routine coordination task",
+        "recommendation": "standard"
+      }
+    },
+    {
+      "input_task": "Update documentation when time permits",
+      "response": {
+        "explanation": "Documentation updates are important but can be deferred",
+        "confidence": 0.75,
+        "rerank_score": 0.45,
+        "reasoning": "Non-urgent maintenance task",
+        "urgency_indicators": [],
+        "mode_alignment": "low priority maintenance",
+        "recommendation": "defer"
+      }
+    }
+  ],
+  "legacy_text_responses": [
+    {
+      "input_task": "Review pull request from team",
+      "response": "EXPLANATION: Code reviews are important for quality but not urgent\nCONFIDENCE: 0.7\nRERANK_SCORE: 0.68"
+    },
+    {
+      "input_task": "Buy groceries",
+      "response": "EXPLANATION: Personal task with moderate importance\nCONFIDENCE: 0.6\nRERANK_SCORE: 0.4"
+    }
+  ],
+  "malformed_responses": [
+    {
+      "input_task": "Test malformed JSON",
+      "response": "{ incomplete json"
+    },
+    {
+      "input_task": "Test non-JSON response",
+      "response": "This is just plain text without any structure"
+    },
+    {
+      "input_task": "Test empty response",
+      "response": ""
+    }
+  ],
+  "cost_test_scenarios": [
+    {
+      "model": "gpt-3.5-turbo",
+      "task_content": "Short task",
+      "expected_cost_range": [0.0001, 0.001]
+    },
+    {
+      "model": "gpt-4",
+      "task_content": "This is a much longer task description with many words to test cost estimation accuracy for larger prompts",
+      "expected_cost_range": [0.005, 0.02]
+    }
+  ],
+  "confidence_test_scenarios": [
+    {
+      "threshold": 0.7,
+      "responses": [
+        {"confidence": 0.8, "should_accept": true},
+        {"confidence": 0.6, "should_accept": false},
+        {"confidence": 0.7, "should_accept": true}
+      ]
+    }
+  ]
+}

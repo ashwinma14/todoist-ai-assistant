@@ -19,7 +19,17 @@ The Todoist AI Assistant is an intelligent, context-aware automation system that
 - Populates a dedicated **Today section** with your top priorities
 - Takes into account task priority, due date, age, and your preferred labels
 - Mode-aware prioritization (work, personal, weekend, evening) for context-appropriate suggestions
+- **GPT-Enhanced Reranking** with intelligent explanations and cost controls
 - Supports `--dry-run` so you can preview your Today list before applying
+
+### GPT-Enhanced Reranking ✨
+
+- **Human-readable explanations** for every prioritization decision
+- **Cost-limited API usage** with configurable spending controls
+- **Confidence-based filtering** to ensure quality recommendations
+- **Rich CLI output** with urgency indicators and mode alignment insights
+- **JSON-based prompting** for reliable, structured responses
+- **Graceful fallbacks** when API limits or errors occur
 
 ### URL & Domain Awareness
 
@@ -116,11 +126,17 @@ For deploying to Render.com or similar platforms:
 # Process inbox in work mode
 python main.py --mode=work
 
-# Generate today’s prioritized task list
+# Generate today's prioritized task list
 python main.py --generate-today --mode=work --limit=3
 
-# Preview today’s ranking without making changes
-python main.py --generate-today --mode=work --limit=3 --dry-run
+# Use GPT-enhanced reranking with cost controls
+python main.py --generate-today --gpt-rerank --mode=work --limit=5
+
+# Preview GPT reranking without making changes
+python main.py --generate-today --gpt-rerank --dry-run --limit=3
+
+# Legacy GPT-enhanced ranking (always enabled)
+python main.py --generate-today --gpt-enhanced-ranking --limit=3
 
 # Refresh Today section and regenerate
 python main.py --generate-today --mode=personal --limit=5 --refresh-today

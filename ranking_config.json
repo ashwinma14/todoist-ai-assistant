@@ -107,5 +107,18 @@
     "verbose_scoring": true,
     "log_candidates": true,
     "log_moves": true
+  },
+  "gpt_reranking": {
+    "enabled": true,
+    "model": "gpt-3.5-turbo",
+    "candidate_limit": 10,
+    "max_tokens": 1000,
+    "temperature": 0.3,
+    "timeout": 30,
+    "cost_limit_per_run_usd": 0.10,
+    "prompt_version": "v1.0",
+    "explanation_required": true,
+    "confidence_threshold": 0.7,
+    "fallback_on_error": true
   }
 }

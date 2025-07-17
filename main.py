@@ -2120,6 +2120,7 @@ def main(test_mode=False):
     # Phase 4: Ranking and Today list generation
     parser.add_argument("--generate-today", action="store_true", help="Generate today's prioritized task list using TaskSense ranking")
     parser.add_argument("--gpt-enhanced-ranking", action="store_true", help="Use GPT-enhanced ranking with explanations")
+    parser.add_argument("--gpt-rerank", action="store_true", help="Enable GPT-powered reranking with cost controls (respects config)")
     parser.add_argument("--limit", type=int, default=3, help="Number of tasks to select for today (default: 3)")
     parser.add_argument("--refresh-today", action="store_true", help="Clear and regenerate today's task list")
     parser.add_argument("--refresh-today-dates", action="store_true", help="Update due dates to today for all tasks in Today section")
@@ -2452,9 +2453,13 @@ def main(test_mode=False):
                     task_logger.info(f"RANKING_START: Mode={ranking_mode}, Limit={ranking_limit}, Tasks={len(tasks_to_process)}")
                     
                     # Run ranking on all available tasks (with GPT enhancement if requested)
-                    if args.gpt_enhanced_ranking:
-                        log_info(f"🤖 Using GPT-enhanced ranking with explanations")
-                        task_logger.info(f"RANKING_MODE: GPT-enhanced ranking enabled")
+                    if args.gpt_enhanced_ranking or args.gpt_rerank:
+                        if args.gpt_rerank:
+                            log_info(f"🤖 Using GPT-powered reranking with cost controls")
+                            task_logger.info(f"RANKING_MODE: GPT reranking enabled (config-driven)")
+                        else:
+                            log_info(f"🤖 Using GPT-enhanced ranking with explanations")
+                            task_logger.info(f"RANKING_MODE: GPT-enhanced ranking enabled")
                         ranked_tasks = task_sense.rank_with_gpt_explanations(tasks_to_process, mode=ranking_mode, limit=ranking_limit)
                     else:
                         ranked_tasks = task_sense.rank(tasks_to_process, mode=ranking_mode, limit=ranking_limit)
@@ -2473,24 +2478,56 @@ def main(test_mode=False):
                                 task_content += "..."
                             
                             # Handle both regular and GPT-enhanced ranking results
-                            if args.gpt_enhanced_ranking and 'final_score' in ranked_task:
-                                # GPT-enhanced ranking
+                            if (args.gpt_enhanced_ranking or args.gpt_rerank) and 'final_score' in ranked_task:
+                                # GPT-enhanced ranking with detailed output
                                 final_score = ranked_task['final_score']
                                 base_score = ranked_task.get('base_score', final_score)
                                 gpt_explanation = ranked_task.get('gpt_explanation', '')
                                 gpt_confidence = ranked_task.get('gpt_confidence', 0.0)
                                 ranking_source = ranked_task.get('ranking_source', 'base_only')
+                                recommendation = ranked_task.get('recommendation', 'standard')
+                                urgency_indicators = ranked_task.get('urgency_indicators', [])
+                                mode_alignment = ranked_task.get('mode_alignment', '')
                                 
                                 score_display = f"{final_score:.2f}"
                                 if final_score != base_score:
-                                    score_display += f" (base: {base_score:.2f})"
+                                    change = "↑" if final_score > base_score else "↓"
+                                    score_display += f" ({change}{abs(final_score - base_score):.2f})"
                                 
+                                # Enhanced display with recommendation and urgency
                                 if HAS_RICH:
-                                    console.print(f"  {i}. [{score_display}] {task_content}", style="green")
-                                    console.print(f"      🤖 {gpt_explanation} (confidence: {gpt_confidence:.2f}, source: {ranking_source})", style="dim blue")
+                                    # Main task line with score and recommendation
+                                    recommendation_icon = {"prioritize": "🔥", "defer": "⏳", "standard": "📋"}.get(recommendation, "📋")
+                                    console.print(f"  {i}. [{score_display}] {recommendation_icon} {task_content}", style="green")
+                                    
+                                    # GPT explanation line
+                                    console.print(f"      🤖 {gpt_explanation}", style="dim blue")
+                                    
+                                    # Additional insights if available
+                                    insights = []
+                                    if urgency_indicators:
+                                        insights.append(f"urgency: {', '.join(urgency_indicators[:3])}")
+                                    if mode_alignment and mode_alignment != 'unknown':
+                                        insights.append(f"alignment: {mode_alignment}")
+                                    insights.append(f"confidence: {gpt_confidence:.2f}")
+                                    insights.append(f"source: {ranking_source}")
+                                    
+                                    console.print(f"      📊 {' | '.join(insights)}", style="dim green")
                                 else:
-                                    print(f"  {i}. [{score_display}] {task_content}")
-                                    print(f"      🤖 {gpt_explanation} (confidence: {gpt_confidence:.2f}, source: {ranking_source})")
+                                    # Text-only output
+                                    recommendation_icon = {"prioritize": "🔥", "defer": "⏳", "standard": "📋"}.get(recommendation, "📋")
+                                    print(f"  {i}. [{score_display}] {recommendation_icon} {task_content}")
+                                    print(f"      🤖 {gpt_explanation}")
+                                    
+                                    insights = []
+                                    if urgency_indicators:
+                                        insights.append(f"urgency: {', '.join(urgency_indicators[:3])}")
+                                    if mode_alignment and mode_alignment != 'unknown':
+                                        insights.append(f"alignment: {mode_alignment}")
+                                    insights.append(f"confidence: {gpt_confidence:.2f}")
+                                    insights.append(f"source: {ranking_source}")
+                                    
+                                    print(f"      📊 {' | '.join(insights)}")
                             else:
                                 # Regular ranking
                                 score = ranked_task['score']
