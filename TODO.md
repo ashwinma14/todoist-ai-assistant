@@ -5,6 +5,10 @@
 
 ---
 
+## 📝 Updated to reflect Phase 4 Roadmap as of 2025-07-17
+
+---
+
 ## 🔍 Additions from Phase 4 Step 2 Reflection
 
 The following tasks were identified during comprehensive reflection on the GPT-Enhanced Reranker implementation to improve architecture, testing, and user experience.
@@ -172,49 +176,110 @@ The following tasks were identified during comprehensive reflection on the GPT-E
 
 ---
 
-## 🎯 Phase 4 Step 3: Advanced Filters & Configurable Modes (v4.2)
+## 🚀 Phase 4 Execution Roadmap
 
-### ⚠️ Next Focus Priority
+### 🔴 Critical
 
-- [ ] **Implement Advanced Task Filters** 🔴 **(4-6 hours)**
-  - Add domain-specific filtering (github.com, example.com, etc.)
-  - Implement tag-based filtering for specific workflows
-  - Create priority-level filters (P1, P2, P3, P4)
-  - Add date-based filters (overdue, due today, future tasks)
+#### 🪜 Step 3: Feedback & Learning System (v4.3)
+🎯 **Objective:** Enable a basic feedback loop to validate & improve GPT-enhanced ranking.  
+🔥 **Why now?** Builds directly on GPT-enhanced output from Step 2 and closes the loop for iterative improvement.
 
-- [ ] **Create Configurable Ranking Modes** 🔴 **(4-5 hours)**
-  - Implement 'work', 'personal', 'urgent' ranking profiles
-  - Add mode-specific weight configurations
-  - Create hybrid modes that blend multiple profiles
-  - Add mode selection via CLI and config
+**Tasks:**
+- [ ] **Add CLI feedback command** 🔴 **(2 hours)**
+  - Implement: `python main.py --feedback task_123 --action=skip`
+  - Support feedback actions: skip, done, reject
 
-- [ ] **Enhanced CLI Interface** 🟡 **(3 hours)**
-  - Add --filter flag with multiple options
-  - Implement --mode flag for ranking profile selection
-  - Create --preset flag for common filter combinations
-  - Add interactive mode selection
+- [ ] **Automatically log feedback from labels** 🔴 **(1.5 hours)**
+  - Track `@today-done` and `@today-skip` labels automatically
+  - Extract feedback signals from user task interactions
 
----
+- [ ] **Write to feedback_log.txt** 🔴 **(1 hour)**
+  - Log with timestamp, task ID/content, and action
+  - Structured format for future analysis
 
-## 📋 Effort Summary
+- [ ] **Add documentation for feedback scenarios** 🟡 **(1 hour)**
+  - Update `TESTING.md` with feedback usage examples
+  - Document feedback command options
 
-**Phase 4 Step 2 Prerequisites:** ~2.5 hours
-**High Priority (can defer):** ~16-20 hours  
-**Medium Priority:** ~15 hours
-**Low Priority:** ~7 hours
-
-**Total Estimated Effort:** ~40-45 hours
+**Commit:** *"Implement feedback loop and logging (Step 3)"*
 
 ---
 
-## 🚀 Recommended Execution Order
+#### 🪜 Step 4: Reliability & Confidence Improvements (v4.4 – Critical Subset)
+🎯 **Objective:** Improve trust and robustness of GPT-enhanced ranking.  
+🧰 **Why now?** Ensures GPT outputs meet quality thresholds and are cost-efficient.
 
-1. ✅ **Phase 4 Step 2 Prerequisites** (completed)
-2. ✅ **Phase 4 Step 2 GPT-Enhanced Reranker** (completed)
-3. **Phase 4 Step 3 Advanced Filters & Configurable Modes** (next focus)
-4. **Unit testing** (parallel to Step 3 development)
-5. **SectionManager extraction** (refactor during Step 3)
-6. **Code quality improvements** (ongoing, as time permits)
+**Tasks:**
+- [ ] **Add confidence threshold in ranking_config.json** 🔴 **(1.5 hours)**
+  - Configure minimum confidence (e.g., exclude tasks < 0.6 confidence)
+  - Implement threshold filtering in ranking logic
+
+- [ ] **Add caching layer for GPT results** 🔴 **(2.5 hours)**
+  - Cache GPT responses to avoid repeated API calls when testing
+  - Implement cache invalidation and management
+
+- [ ] **Add minimal unit tests** 🟡 **(2 hours)**
+  - Test confidence filtering & fallback logic
+  - Validate caching behavior
+
+**Commit:** *"Add confidence threshold, caching, and unit tests (Step 4)"*
+
+---
+
+### 🟢 Nice-to-Have
+
+#### 🪜 Step 5: Advanced Filters & Configurable Modes (v4.2)
+🎨 **Objective:** Support advanced mode-aware filters, weights, and exclusions.  
+🧰 **Why later?** Not essential for core functionality; can be added after MVP.
+
+**Tasks:**
+- [ ] **Extend ranking_config.json with per-mode filters** 🟢 **(2 hours)**
+  - Add per-mode Todoist filter queries (optional)
+  - Support mode-specific task filtering
+
+- [ ] **Add preferred/excluded labels per mode** 🟢 **(1.5 hours)**
+  - Configure labels to prefer or avoid by mode
+  - Implement label-based mode filtering
+
+- [ ] **Add per-mode weights** 🟢 **(2 hours)**
+  - Configure priority, overdue, etc. weights per mode
+  - Support different scoring strategies by mode
+
+- [ ] **Refine auto-detect mode logic** 🟢 **(1.5 hours)**
+  - Time/day-based mode detection
+  - CLI override support
+
+**Commit:** *"Implement advanced mode filters & weights (Step 5)"*
+
+---
+
+#### 🧪 Ongoing/Parallel Work
+🧰 **These can happen in parallel or after MVP milestones are shipped:**
+
+- [ ] **Comprehensive unit test suite** 🟡 **(8-12 hours)**
+- [ ] **SectionManager class extraction** 🟡 **(4-6 hours)**
+  - Centralized routing logic for section management
+- [ ] **Config management consolidation** 🟢 **(3 hours)**
+  - Clarity and maintainability improvements
+- [ ] **CLI polish** 🟢 **(2 hours)**
+  - `--refresh-today`, improved verbose output formatting
+- [ ] **Add deployment & contribution documentation** 🔵 **(2 hours)**
+- [ ] **Performance monitoring** 🔵 **(3 hours)**
+  - Timing metrics and dashboard
+- [ ] **URL processing module extraction** 🟢 **(2 hours)**
+
+---
+
+## 📋 Execution Priority
+
+**Immediate Focus (Critical):**
+1. ✅ **Phase 4 Step 2 GPT-Enhanced Reranker** (completed)
+2. **Phase 4 Step 3 Feedback & Learning System** (next)
+3. **Phase 4 Step 4 Reliability & Confidence** (follow-up)
+
+**Future Enhancements (Nice-to-Have):**
+4. **Phase 4 Step 5 Advanced Filters & Modes**
+5. **Ongoing/Parallel Work** (as time permits)
 
 ---
 
