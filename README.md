@@ -13,15 +13,17 @@ The Todoist AI Assistant is an intelligent, context-aware automation system that
 - Supports **reasoning levels**: minimal (labels only), light (labels + explanation), deep (labels + explanation + rationale)
 - Offers **soft matching mode**, suggesting new labels outside your predefined set for later review
 
-### Smart Daily Focus
+### Smart Daily Focus with GPT-Enhanced Reranker 🚀
 
-- Ranks your backlog tasks and selects the most relevant ones for **Today**
-- Populates a dedicated **Today section** with your top priorities
-- Takes into account task priority, due date, age, and your preferred labels
-- Mode-aware prioritization (work, personal, weekend, evening) for context-appropriate suggestions
-- **GPT-Enhanced Reranking** with intelligent explanations and cost controls
-- Supports `--dry-run` so you can preview your Today list before applying
-
+-   Ranks your backlog tasks and selects the most relevant ones for **Today**
+-   Populates a dedicated **Today section** with your top priorities
+-   Takes into account task priority, due date, age, and your preferred labels
+-   Leverages GPT to rerank top candidates with semantic understanding of your context
+-   Produces clear, human-readable explanations for each recommended task
+-   Enforces cost controls, confidence thresholds, and fallbacks for reliability
+-   Mode-aware prioritization (work, personal, weekend, evening) for context-appropriate suggestions
+-   Supports `--dry-run` so you can preview your Today list before applying
+    
 ### GPT-Enhanced Reranking ✨
 
 - **Human-readable explanations** for every prioritization decision
