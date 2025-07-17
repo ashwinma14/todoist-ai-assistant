@@ -273,8 +273,12 @@ Please respond with one or two relevant labels from the available labels list.""
         # Try OpenAI package first
         if OPENAI_AVAILABLE:
             try:
-                # Initialize OpenAI client with defensive error handling
-                client = OpenAI(api_key=os.environ.get('OPENAI_API_KEY'))
+                # Initialize OpenAI client with cleaned API key
+                api_key_raw = os.environ.get('OPENAI_API_KEY')
+                api_key_to_use = api_key_raw.strip() if api_key_raw else None
+                
+                client = OpenAI(api_key=api_key_to_use)
+                
                 response = client.chat.completions.create(
                     model=model,
                     messages=[{"role": "user", "content": prompt}],
@@ -295,7 +299,7 @@ Please respond with one or two relevant labels from the available labels list.""
                         self.logger.warning(f"OpenAI TypeError: {e}, falling back to HTTP")
             except Exception as e:
                 if self.logger:
-                    self.logger.warning(f"OpenAI package error: {e}, falling back to HTTP")
+                    self.logger.error(f"OpenAI package error: {e}, falling back to HTTP")
         
         # Fallback to direct HTTP
         return self._call_openai_http(prompt, model)
@@ -303,8 +307,13 @@ Please respond with one or two relevant labels from the available labels list.""
     def _call_openai_http(self, prompt: str, model: str) -> Optional[str]:
         """Direct HTTP call to OpenAI API."""
         url = "https://api.openai.com/v1/chat/completions"
+        
+        # Get cleaned API key
+        api_key_raw = os.environ.get('OPENAI_API_KEY')
+        api_key_cleaned = api_key_raw.strip() if api_key_raw else None
+        
         headers = {
-            "Authorization": f"Bearer {os.environ.get('OPENAI_API_KEY')}",
+            "Authorization": f"Bearer {api_key_cleaned}",
             "Content-Type": "application/json"
         }
         data = {
@@ -866,16 +875,26 @@ Please respond with one or two relevant labels from the available labels list.""
         Returns:
             List of ranked tasks with GPT explanations and potential reranking
         """
-        # First, get the base ranking
-        base_ranking = self.rank(tasks, mode, limit * 2, config_override)  # Get more candidates for reranking
+        # Use override config or default
+        config = config_override or self.ranking_config
+        
+        # Check if GPT reranking is enabled
+        gpt_config = config.get('gpt_reranking', {})
+        if not gpt_config.get('enabled', False):
+            if self.logger:
+                self.logger.info("GPT_RANK_DISABLED: GPT reranking is disabled in configuration")
+            # Fall back to base ranking
+            return self.rank(tasks, mode, limit, config_override)
+        
+        # First, get the base ranking with more candidates for reranking
+        candidate_limit = gpt_config.get('candidate_limit', 10)
+        base_candidates = max(limit * 2, candidate_limit)
+        base_ranking = self.rank(tasks, mode, base_candidates, config_override)
         
         if not base_ranking:
             if self.logger:
                 self.logger.info("GPT_RANK_EMPTY: No base ranking candidates for GPT enhancement")
             return []
-        
-        # Use override config or default
-        config = config_override or self.ranking_config
         
         # Determine mode
         if mode is None:
@@ -883,19 +902,51 @@ Please respond with one or two relevant labels from the available labels list.""
         elif mode == 'auto':
             mode = self._detect_mode()
         
-        # Log GPT ranking start
+        # Limit candidates based on configuration
+        candidates_to_process = base_ranking[:candidate_limit]
+        
+        # Initialize cost tracking
+        estimated_cost = 0.0
+        cost_limit = gpt_config.get('cost_limit_per_run_usd', 0.10)
+        
+        # Log GPT ranking start with cost info
         if self.logger:
-            self.logger.info(f"GPT_RANK_START: Processing {len(base_ranking)} candidates for GPT-enhanced ranking (mode: {mode})")
+            self.logger.info(f"GPT_RANK_START: Processing {len(candidates_to_process)} candidates for GPT-enhanced ranking (mode: {mode})")
+            self.logger.info(f"GPT_RANK_CONFIG: Model={gpt_config.get('model', 'gpt-3.5-turbo')}, Max tokens={gpt_config.get('max_tokens', 1000)}, Cost limit=${cost_limit:.3f}")
         
         # Get GPT explanations for top candidates
         gpt_enhanced_tasks = []
-        for i, ranked_task in enumerate(base_ranking):
+        for i, ranked_task in enumerate(candidates_to_process):
             task = ranked_task['task']
             base_score = ranked_task['score']
             base_explanation = ranked_task['explanation']
             
-            # Get GPT explanation
-            gpt_result = self._get_gpt_ranking_explanation(task, base_score, base_explanation, mode)
+            # Check cost limit before making API call
+            estimated_request_cost = self._estimate_gpt_request_cost(task, gpt_config)
+            if estimated_cost + estimated_request_cost > cost_limit:
+                if self.logger:
+                    task_id = task.get('id', 'unknown')
+                    self.logger.warning(f"GPT_RANK_COST_LIMIT: Stopping at task {task_id} | Estimated cost: ${estimated_cost + estimated_request_cost:.4f} > limit: ${cost_limit:.3f}")
+                break
+            
+            # Get GPT explanation with cost tracking
+            gpt_result = self._get_gpt_ranking_explanation(task, base_score, base_explanation, mode, gpt_config)
+            
+            # Update actual cost
+            actual_cost = gpt_result.get('cost', estimated_request_cost)
+            estimated_cost += actual_cost
+            
+            # Apply confidence threshold filtering
+            confidence_threshold = gpt_config.get('confidence_threshold', 0.7)
+            if gpt_result.get('confidence', 0.0) < confidence_threshold:
+                if self.logger:
+                    task_id = task.get('id', 'unknown')
+                    confidence = gpt_result.get('confidence', 0.0)
+                    self.logger.info(f"GPT_RANK_LOW_CONFIDENCE: Task {task_id} | Confidence: {confidence:.2f} < threshold: {confidence_threshold:.2f}")
+                
+                # Use base score for low confidence results
+                gpt_result['rerank_score'] = base_score
+                gpt_result['source'] = 'low_confidence_fallback'
             
             enhanced_task = {
                 'task': task,
@@ -906,12 +957,17 @@ Please respond with one or two relevant labels from the available labels list.""
                 'gpt_model': gpt_result.get('model', 'unknown'),
                 'gpt_rerank_score': gpt_result.get('rerank_score', base_score),
                 'final_score': gpt_result.get('rerank_score', base_score),
-                'ranking_source': gpt_result.get('source', 'base_only')
+                'ranking_source': gpt_result.get('source', 'base_only'),
+                'gpt_reasoning': gpt_result.get('reasoning', ''),
+                'urgency_indicators': gpt_result.get('urgency_indicators', []),
+                'mode_alignment': gpt_result.get('mode_alignment', ''),
+                'recommendation': gpt_result.get('recommendation', 'standard'),
+                'cost': actual_cost
             }
             
             gpt_enhanced_tasks.append(enhanced_task)
             
-            # Log GPT ranking for each candidate
+            # Log GPT ranking for each candidate with enhanced data
             if self.logger:
                 task_id = task.get('id', 'unknown')
                 task_content = task.get('content', 'No content')[:50]
@@ -919,8 +975,15 @@ Please respond with one or two relevant labels from the available labels list.""
                 gpt_confidence = gpt_result.get('confidence', 0.0)
                 gpt_model = gpt_result.get('model', 'unknown')
                 
-                self.logger.info(f"GPT_RANK_CANDIDATE: Task {task_id} → Base: {base_score:.3f} | GPT: {gpt_result.get('rerank_score', base_score):.3f} | Confidence: {gpt_confidence:.2f} | Model: {gpt_model} | Source: {gpt_source}")
+                self.logger.info(f"GPT_RANK_CANDIDATE: Task {task_id} → Base: {base_score:.3f} | GPT: {gpt_result.get('rerank_score', base_score):.3f} | Confidence: {gpt_confidence:.2f} | Model: {gpt_model} | Source: {gpt_source} | Cost: ${actual_cost:.4f}")
                 self.logger.info(f"GPT_RANK_EXPLANATION: Task {task_id} | Base: {base_explanation} | GPT: {gpt_result.get('explanation', 'No explanation')} | Content: {task_content}")
+                
+                # Log additional structured data
+                if gpt_result.get('urgency_indicators'):
+                    self.logger.info(f"GPT_RANK_URGENCY: Task {task_id} | Indicators: {', '.join(gpt_result.get('urgency_indicators', []))}")
+                
+                if gpt_result.get('recommendation') != 'standard':
+                    self.logger.info(f"GPT_RANK_RECOMMENDATION: Task {task_id} | {gpt_result.get('recommendation', 'standard').upper()}: {gpt_result.get('reasoning', '')}")
         
         # Sort by final score (which may include GPT reranking)
         gpt_enhanced_tasks.sort(key=lambda x: x['final_score'], reverse=True)
@@ -928,25 +991,30 @@ Please respond with one or two relevant labels from the available labels list.""
         # Apply limit
         final_ranking = gpt_enhanced_tasks[:limit]
         
-        # Log GPT ranking summary
-        if final_ranking and self.logger:
-            gpt_enhanced_count = len([t for t in final_ranking if t['ranking_source'] == 'gpt_enhanced'])
-            self.logger.info(f"GPT_RANK_SUMMARY: Selected {len(final_ranking)} tasks from {len(gpt_enhanced_tasks)} candidates ({gpt_enhanced_count} GPT-enhanced)")
+        # Log GPT ranking summary with cost information
+        if self.logger:
+            gpt_enhanced_count = len([t for t in gpt_enhanced_tasks if t['ranking_source'] == 'gpt_enhanced'])
+            gpt_reranked_count = len([t for t in gpt_enhanced_tasks if t['ranking_source'] == 'gpt_reranked'])
+            total_cost = sum(t.get('cost', 0.0) for t in gpt_enhanced_tasks)
             
+            self.logger.info(f"GPT_RANK_SUMMARY: Selected {len(final_ranking)} tasks from {len(gpt_enhanced_tasks)} candidates | GPT enhanced: {gpt_enhanced_count}, reranked: {gpt_reranked_count} | Total cost: ${total_cost:.4f}")
+            
+            # Log top ranked tasks with enhanced details
             for i, ranked_task in enumerate(final_ranking, 1):
                 task_id = ranked_task['task'].get('id', 'unknown')
                 final_score = ranked_task['final_score']
                 base_score = ranked_task['base_score']
                 source = ranked_task['ranking_source']
                 gpt_explanation = ranked_task['gpt_explanation']
+                recommendation = ranked_task.get('recommendation', 'standard')
                 
                 score_change = f" (↑{final_score - base_score:.3f})" if final_score > base_score else f" (↓{base_score - final_score:.3f})" if final_score < base_score else ""
                 
-                self.logger.info(f"GPT_RANK_TOP_{i}: Task {task_id} (score: {final_score:.3f}{score_change}) - {source} | GPT: {gpt_explanation}")
+                self.logger.info(f"GPT_RANK_TOP_{i}: Task {task_id} (score: {final_score:.3f}{score_change}) - {source} | Rec: {recommendation} | GPT: {gpt_explanation}")
         
         return final_ranking
     
-    def _get_gpt_ranking_explanation(self, task: Dict[str, Any], base_score: float, base_explanation: str, mode: str) -> Dict[str, Any]:
+    def _get_gpt_ranking_explanation(self, task: Dict[str, Any], base_score: float, base_explanation: str, mode: str, gpt_config: Optional[Dict] = None) -> Dict[str, Any]:
         """
         Get GPT explanation and potential reranking for a task.
         
@@ -1004,38 +1072,156 @@ Please respond with one or two relevant labels from the available labels list.""
             }
     
     def _construct_gpt_ranking_prompt(self, task: Dict[str, Any], base_score: float, base_explanation: str, mode: str) -> str:
-        """Construct GPT prompt for ranking explanation."""
+        """Construct JSON-based GPT prompt for ranking explanation."""
         task_content = task.get('content', 'No content')
         task_priority = task.get('priority', 4)
         task_due = task.get('due', {}).get('string', 'No due date') if task.get('due') else 'No due date'
         task_labels = ', '.join(task.get('labels', [])) or 'No labels'
         
-        prompt = f"""You are a productivity assistant analyzing task prioritization. 
+        # Get user profile for context
+        user_profile = self.config.get('user_profile', 'Productivity-focused user')
+        
+        # Build JSON prompt structure
+        prompt_data = {
+            "task": {
+                "content": task_content,
+                "priority": task_priority,
+                "due_date": task_due,
+                "labels": task.get('labels', []),
+                "id": task.get('id', 'unknown')
+            },
+            "context": {
+                "mode": mode,
+                "user_profile": user_profile,
+                "base_score": base_score,
+                "base_explanation": base_explanation
+            },
+            "request": {
+                "analyze_task_priority": True,
+                "provide_explanation": True,
+                "suggest_rerank_score": True,
+                "confidence_assessment": True
+            }
+        }
+        
+        prompt = f"""You are a productivity assistant analyzing task prioritization. Please analyze this task and provide a JSON response.
 
-Task: {task_content}
-Priority: {task_priority} (1=highest, 4=lowest)
-Due: {task_due}
-Labels: {task_labels}
-Current mode: {mode}
+INPUT DATA:
+{json.dumps(prompt_data, indent=2)}
 
-Base ranking score: {base_score:.3f}
-Base explanation: {base_explanation}
+INSTRUCTIONS:
+1. Analyze the task's priority in the context of the current mode ({mode})
+2. Consider the user profile and base ranking explanation
+3. Provide a clear, human-readable explanation for your recommendation
+4. Assess your confidence in the analysis (0.0-1.0)
+5. Suggest a rerank score (0.0-1.0) if the base score should be adjusted
 
-Please provide:
-1. A human-readable explanation of why this task should be prioritized in {mode} mode
-2. Your confidence in this assessment (0.0-1.0)
-3. Whether the score should be adjusted (suggest new score 0.0-1.0 if needed)
+REQUIRED JSON RESPONSE FORMAT:
+{{
+  "explanation": "Your human-readable explanation of why this task should/shouldn't be prioritized",
+  "confidence": 0.85,
+  "rerank_score": {base_score:.3f},
+  "reasoning": "Brief technical reasoning for score adjustment",
+  "urgency_indicators": ["list", "of", "detected", "urgency", "signals"],
+  "mode_alignment": "how well this task fits the current mode",
+  "recommendation": "prioritize|defer|standard"
+}}
 
-Respond in format:
-EXPLANATION: [your explanation]
-CONFIDENCE: [0.0-1.0]
-RERANK_SCORE: [original score or new score]
-"""
+Respond ONLY with valid JSON. Do not include any text before or after the JSON response."""
         
         return prompt
     
     def _parse_gpt_ranking_response(self, response: str, task: Dict[str, Any], base_score: float, base_explanation: str) -> Dict[str, Any]:
-        """Parse GPT ranking response into structured format."""
+        """Parse JSON-based GPT ranking response into structured format."""
+        # Default values
+        result = {
+            'explanation': base_explanation,
+            'confidence': 0.5,
+            'model': self.config.get('model', 'gpt-3.5-turbo'),
+            'rerank_score': base_score,
+            'source': 'base_only',
+            'reasoning': base_explanation,
+            'urgency_indicators': [],
+            'mode_alignment': 'unknown',
+            'recommendation': 'standard'
+        }
+        
+        try:
+            # Clean response (remove any text before/after JSON)
+            response = response.strip()
+            
+            # Find JSON content (handle cases where GPT adds extra text)
+            start_idx = response.find('{')
+            end_idx = response.rfind('}') + 1
+            
+            if start_idx != -1 and end_idx > start_idx:
+                json_content = response[start_idx:end_idx]
+                gpt_data = json.loads(json_content)
+                
+                # Extract structured data
+                if 'explanation' in gpt_data:
+                    result['explanation'] = str(gpt_data['explanation']).strip()
+                    result['source'] = 'gpt_enhanced'
+                
+                if 'confidence' in gpt_data:
+                    confidence = float(gpt_data['confidence'])
+                    result['confidence'] = max(0.0, min(1.0, confidence))  # Clamp to 0-1
+                
+                if 'rerank_score' in gpt_data:
+                    new_score = float(gpt_data['rerank_score'])
+                    # Only accept reasonable score adjustments (within 0.0-1.0 range)
+                    if 0.0 <= new_score <= 1.0:
+                        result['rerank_score'] = new_score
+                        if abs(new_score - base_score) > 0.05:  # Significant change
+                            result['source'] = 'gpt_reranked'
+                        else:
+                            result['source'] = 'gpt_enhanced'
+                
+                # Extract additional structured fields
+                if 'reasoning' in gpt_data:
+                    result['reasoning'] = str(gpt_data['reasoning']).strip()
+                
+                if 'urgency_indicators' in gpt_data and isinstance(gpt_data['urgency_indicators'], list):
+                    result['urgency_indicators'] = [str(x) for x in gpt_data['urgency_indicators'][:10]]  # Limit to 10
+                
+                if 'mode_alignment' in gpt_data:
+                    result['mode_alignment'] = str(gpt_data['mode_alignment']).strip()
+                
+                if 'recommendation' in gpt_data:
+                    rec = str(gpt_data['recommendation']).lower()
+                    if rec in ['prioritize', 'defer', 'standard']:
+                        result['recommendation'] = rec
+                
+                # Log successful JSON parsing
+                if self.logger:
+                    task_id = task.get('id', 'unknown')
+                    self.logger.debug(f"GPT_JSON_PARSE_SUCCESS: Task {task_id} | Confidence: {result['confidence']:.2f} | Recommendation: {result['recommendation']}")
+            
+            else:
+                # Fallback to regex parsing for non-JSON responses
+                if self.logger:
+                    task_id = task.get('id', 'unknown') 
+                    self.logger.warning(f"GPT_JSON_PARSE_FALLBACK: Task {task_id} | No valid JSON found, using regex fallback")
+                
+                return self._parse_gpt_ranking_response_regex_fallback(response, task, base_score, base_explanation)
+        
+        except json.JSONDecodeError as e:
+            if self.logger:
+                task_id = task.get('id', 'unknown')
+                self.logger.warning(f"GPT_JSON_PARSE_ERROR: Task {task_id} | JSON decode error: {e}")
+            
+            # Fallback to regex parsing
+            return self._parse_gpt_ranking_response_regex_fallback(response, task, base_score, base_explanation)
+        
+        except Exception as e:
+            if self.logger:
+                task_id = task.get('id', 'unknown')
+                self.logger.error(f"GPT_PARSE_ERROR: Task {task_id} | Unexpected error: {e}")
+        
+        return result
+    
+    def _parse_gpt_ranking_response_regex_fallback(self, response: str, task: Dict[str, Any], base_score: float, base_explanation: str) -> Dict[str, Any]:
+        """Fallback regex-based parsing for non-JSON GPT responses."""
         import re
         
         # Default values
@@ -1044,7 +1230,11 @@ RERANK_SCORE: [original score or new score]
             'confidence': 0.5,
             'model': self.config.get('model', 'gpt-3.5-turbo'),
             'rerank_score': base_score,
-            'source': 'base_only'
+            'source': 'base_only',
+            'reasoning': base_explanation,
+            'urgency_indicators': [],
+            'mode_alignment': 'unknown',
+            'recommendation': 'standard'
         }
         
         try:
@@ -1073,12 +1263,13 @@ RERANK_SCORE: [original score or new score]
         
         except Exception as e:
             if self.logger:
-                self.logger.warning(f"Error parsing GPT ranking response: {e}")
+                task_id = task.get('id', 'unknown')
+                self.logger.warning(f"GPT_REGEX_PARSE_ERROR: Task {task_id} | Error: {e}")
         
         return result
     
     def _get_mock_gpt_explanation(self, task: Dict[str, Any], base_score: float, base_explanation: str, mode: str) -> Dict[str, Any]:
-        """Generate mock GPT explanation for testing."""
+        """Generate mock GPT explanation for testing with enhanced JSON structure."""
         content = task.get('content', '').lower()
         
         # Mock reasoning based on task content
@@ -1087,28 +1278,49 @@ RERANK_SCORE: [original score or new score]
             confidence = 0.9
             rerank_score = min(base_score + 0.1, 1.0)
             source = 'gpt_reranked'
+            reasoning = "Detected urgency keywords requiring immediate attention"
+            urgency_indicators = ['urgent', 'critical']
+            mode_alignment = "high priority alignment with current mode"
+            recommendation = "prioritize"
         elif 'meeting' in content:
             explanation = f"Meeting tasks require coordination and should be prioritized in {mode} mode"
             confidence = 0.8
             rerank_score = base_score + 0.05
             source = 'gpt_enhanced'
+            reasoning = "Meeting tasks require coordination and timing"
+            urgency_indicators = ['meeting']
+            mode_alignment = "requires time coordination"
+            recommendation = "prioritize"
         elif mode == 'work' and any(word in content for word in ['work', 'project', 'deadline']):
             explanation = f"Work-related task aligns well with current {mode} mode"
             confidence = 0.7
             rerank_score = base_score + 0.03
             source = 'gpt_enhanced'
+            reasoning = "Task content matches work mode context"
+            urgency_indicators = ['deadline', 'project']
+            mode_alignment = "strong alignment with work mode"
+            recommendation = "standard"
         else:
             explanation = f"Standard task prioritization for {mode} mode"
             confidence = 0.6
             rerank_score = base_score
             source = 'gpt_enhanced'
+            reasoning = "No specific urgency or mode indicators detected"
+            urgency_indicators = []
+            mode_alignment = "neutral alignment"
+            recommendation = "standard"
         
         return {
             'explanation': explanation,
             'confidence': confidence,
             'model': 'mock',
             'rerank_score': rerank_score,
-            'source': source
+            'source': source,
+            'reasoning': reasoning,
+            'urgency_indicators': urgency_indicators,
+            'mode_alignment': mode_alignment,
+            'recommendation': recommendation,
+            'cost': 0.0  # Mock responses have no cost
         }
     
     def _detect_mode(self) -> str:
@@ -1138,3 +1350,39 @@ RERANK_SCORE: [original score or new score]
         
         # Default to personal for other times
         return 'personal'
+    
+    def _estimate_gpt_request_cost(self, task: Dict[str, Any], gpt_config: Dict[str, Any]) -> float:
+        """
+        Estimate the cost of a GPT API request for ranking explanation.
+        
+        Args:
+            task: Task dictionary
+            gpt_config: GPT configuration with model and token limits
+            
+        Returns:
+            float: Estimated cost in USD
+        """
+        model = gpt_config.get('model', 'gpt-3.5-turbo')
+        max_tokens = gpt_config.get('max_tokens', 1000)
+        
+        # Rough estimation based on task content length and prompt structure
+        task_content = task.get('content', '')
+        base_prompt_tokens = 200  # Approximate tokens for base prompt structure
+        task_tokens = len(task_content.split()) * 1.3  # Rough token estimation
+        total_input_tokens = base_prompt_tokens + task_tokens
+        
+        # Model-specific pricing (approximate rates as of 2024)
+        pricing = {
+            'gpt-3.5-turbo': {'input': 0.0015 / 1000, 'output': 0.002 / 1000},  # per token
+            'gpt-4': {'input': 0.03 / 1000, 'output': 0.06 / 1000},
+            'gpt-4-turbo': {'input': 0.01 / 1000, 'output': 0.03 / 1000}
+        }
+        
+        model_pricing = pricing.get(model, pricing['gpt-3.5-turbo'])
+        
+        # Estimate cost: input tokens + estimated output tokens
+        estimated_output_tokens = min(max_tokens, 300)  # Most responses are shorter
+        estimated_cost = (total_input_tokens * model_pricing['input'] + 
+                         estimated_output_tokens * model_pricing['output'])
+        
+        return estimated_cost
