@@ -39,6 +39,14 @@ except ImportError:
     console = None
     HAS_RICH = False
 
+# Module-level section cache to prevent duplicate section creation within a single run
+_section_cache = {}
+
+def clear_section_cache():
+    """Clear section cache for new execution run"""
+    global _section_cache
+    _section_cache.clear()
+
 class TaskSummary:
     def __init__(self):
         self.tasks_updated = 0
@@ -692,8 +700,16 @@ def _get_mock_gpt_labels(content):
         return ['personal']
 
 
-def get_project_sections(project_id, task_logger=None):
-    """Get all sections for a project"""
+def get_project_sections(project_id, task_logger=None, use_cache=True):
+    """Get all sections for a project with optional caching"""
+    global _section_cache
+    
+    # Use cache if available and requested
+    if use_cache and project_id in _section_cache:
+        if task_logger:
+            task_logger.info(f"SECTIONS_CACHE: Using cached sections for project {project_id}")
+        return _section_cache[project_id]
+    
     try:
         response = requests.get(f"{TODOIST_API}/sections?project_id={project_id}", headers=HEADERS)
         response.raise_for_status()
@@ -702,7 +718,14 @@ def get_project_sections(project_id, task_logger=None):
         if task_logger:
             task_logger.info(f"SECTIONS: Retrieved {len(sections)} sections for project {project_id}")
         
-        return {section['name']: section['id'] for section in sections}
+        # Normalize section names for case-insensitive comparison
+        section_dict = {section['name'].strip(): section['id'] for section in sections}
+        
+        # Cache the result
+        if use_cache:
+            _section_cache[project_id] = section_dict
+        
+        return section_dict
     except Exception as e:
         if task_logger:
             task_logger.error(f"SECTIONS_ERROR: Failed to get sections for project {project_id}: {e}")
@@ -1040,14 +1063,29 @@ def create_section_sync_api(section_name, project_id, task_logger=None):
 
 def create_section_if_missing_sync(section_name, project_id, task_logger=None):
     """Create a section if it doesn't exist using Sync API, return section_id"""
+    global _section_cache
+    
     try:
+        # Normalize section name for consistent comparison
+        normalized_name = section_name.strip()
+        
         # First check if section already exists
         sections = get_project_sections(project_id, task_logger)
-        if section_name in sections:
-            return sections[section_name]
+        if normalized_name in sections:
+            if task_logger:
+                task_logger.info(f"SECTION_EXISTS: Section '{normalized_name}' already exists (ID: {sections[normalized_name]})")
+            return sections[normalized_name]
         
         # Create new section using Sync API
-        return create_section_sync_api(section_name, project_id, task_logger)
+        section_id = create_section_sync_api(normalized_name, project_id, task_logger)
+        
+        # Update cache with new section
+        if section_id and project_id in _section_cache:
+            _section_cache[project_id][normalized_name] = section_id
+            if task_logger:
+                task_logger.info(f"SECTION_CACHE_UPDATE: Added '{normalized_name}' to cache (ID: {section_id})")
+        
+        return section_id
             
     except Exception as e:
         if task_logger:
@@ -2099,6 +2137,9 @@ def move_tasks_to_today_section(ranked_tasks, project_id, section_id, task_logge
 
 
 def main(test_mode=False):
+    # Clear section cache at start of each run
+    clear_section_cache()
+    
     summary = TaskSummary()
     task_logger = setup_task_logging()
     
