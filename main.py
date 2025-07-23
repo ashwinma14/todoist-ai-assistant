@@ -176,6 +176,76 @@ def setup_task_logging():
     return task_logger
 
 
+def setup_feedback_logging(config=None):
+    """Setup file logging for feedback data"""
+    # Create a separate logger for feedback
+    feedback_logger = logging.getLogger('feedback_processor')
+    feedback_logger.setLevel(logging.INFO)
+    
+    # Remove existing handlers to avoid duplicates
+    for handler in feedback_logger.handlers[:]:
+        feedback_logger.removeHandler(handler)
+    
+    # Get log file path from config, default to 'feedback_log.txt'
+    log_file = 'feedback_log.txt'
+    if config and 'logging' in config and 'feedback_log_file' in config['logging']:
+        log_file = config['logging']['feedback_log_file']
+    
+    # Create file handler
+    file_handler = logging.FileHandler(log_file, mode='a', encoding='utf-8')
+    file_handler.setLevel(logging.INFO)
+    
+    # Create formatter with timestamp
+    formatter = logging.Formatter(
+        '%(asctime)s | %(levelname)s | %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    file_handler.setFormatter(formatter)
+    
+    # Add handler to logger
+    feedback_logger.addHandler(file_handler)
+    
+    return feedback_logger
+
+
+def log_feedback_action(feedback_logger, task_id, task_content, action, **kwargs):
+    """Log feedback action with structured data for future analysis"""
+    # Truncate very long content for readability
+    content_preview = task_content[:100] + "..." if len(task_content) > 100 else task_content
+    
+    log_parts = [
+        f"FEEDBACK",
+        f"Task_ID: {task_id}",
+        f"Action: {action}",
+        f"Content: {repr(content_preview)}"
+    ]
+    
+    # Add optional contextual information
+    if 'mode' in kwargs and kwargs['mode']:
+        log_parts.append(f"Mode: {kwargs['mode']}")
+    
+    if 'labels' in kwargs and kwargs['labels']:
+        log_parts.append(f"Labels: {kwargs['labels']}")
+    
+    if 'confidence' in kwargs and kwargs['confidence']:
+        log_parts.append(f"Confidence: {kwargs['confidence']:.2f}")
+    
+    if 'explanation' in kwargs and kwargs['explanation']:
+        explanation_preview = kwargs['explanation'][:100] + "..." if len(kwargs['explanation']) > 100 else kwargs['explanation']
+        log_parts.append(f"Explanation: {repr(explanation_preview)}")
+    
+    if 'section' in kwargs and kwargs['section']:
+        log_parts.append(f"Section: {kwargs['section']}")
+    
+    if 'priority' in kwargs and kwargs['priority']:
+        log_parts.append(f"Priority: {kwargs['priority']}")
+    
+    # Join all parts with separator
+    log_message = " | ".join(log_parts)
+    
+    feedback_logger.info(log_message)
+
+
 def get_last_run_timestamp():
     """Get the timestamp of the last successful run"""
     try:
@@ -2149,6 +2219,7 @@ def main(test_mode=False):
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose output")
     parser.add_argument("--dry-run", action="store_true", help="Preview changes without modifying any tasks")
     parser.add_argument("--full-scan", action="store_true", help="Process all tasks, ignoring last run timestamp")
+    parser.add_argument("--ignore-last-run", action="store_true", help="Bypass last run timestamp check (useful for cloud environments)")
     parser.add_argument("--mode", type=str, choices=['personal', 'work', 'weekend', 'evening', 'auto'], 
                         help="Set TaskSense mode (personal, work, weekend, evening, auto)")
     parser.add_argument("--label-task", type=str, help="Label a single task and exit (requires --mode)")
@@ -2355,7 +2426,12 @@ def main(test_mode=False):
     # Get last run timestamp for incremental processing
     last_run_time = None
     force_full_scan = args.full_scan or os.getenv("FORCE_FULL_SCAN", "").lower() in ("true", "1", "yes")
-    if not force_full_scan and not test_mode:
+    ignore_last_run = args.ignore_last_run
+    
+    if ignore_last_run:
+        log_info("⏭️  Ignoring last_run.txt; processing all tasks", "yellow")
+        last_run_time = None
+    elif not force_full_scan and not test_mode:
         last_run_time = get_last_run_timestamp()
     
     # Log session start
@@ -2366,7 +2442,9 @@ def main(test_mode=False):
         mode_info.append("DRY_RUN")
     if args.verbose:
         mode_info.append("VERBOSE")
-    if force_full_scan:
+    if ignore_last_run:
+        mode_info.append("IGNORE_LAST_RUN")
+    elif force_full_scan:
         mode_info.append("FULL_SCAN")
     elif last_run_time:
         mode_info.append("INCREMENTAL")

@@ -145,7 +145,24 @@ python main.py --generate-today --mode=personal --limit=5 --refresh-today
 
 # Auto-detect mode based on time
 python main.py --generate-today --mode=auto
+
+# Ignore last run timestamp (useful for cloud environments)
+python main.py --generate-today --gpt-rerank --ignore-last-run
 ```
+
+### 🛠️ CLI Options
+
+- `--mode` - Set TaskSense mode (`personal`, `work`, `weekend`, `evening`, `auto`)
+- `--generate-today` - Generate today's prioritized task list using TaskSense ranking
+- `--gpt-rerank` - Enable GPT-powered reranking with cost controls
+- `--limit` - Number of tasks to select for today (default: 3)
+- `--dry-run` - Preview changes without modifying any tasks
+- `--verbose` - Enable verbose output
+- `--full-scan` - Process all tasks, ignoring last run timestamp
+- `--ignore-last-run` - Bypass last run timestamp check (useful for cloud environments)
+- `--refresh-today` - Clear and regenerate today's task list
+- `--project` - Comma-separated list of project names to process
+- `--fix-sections` - Force section routing for tasks with labels but missing section assignments
 
 ---
 

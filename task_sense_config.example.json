@@ -84,7 +84,8 @@
   "logging": {
     "log_explanations": true,
     "log_confidence": true,
-    "log_mode_detection": true
+    "log_mode_detection": true,
+    "feedback_log_file": "feedback_log.txt"
   },
   "mock_mode": {
     "enabled": false,
