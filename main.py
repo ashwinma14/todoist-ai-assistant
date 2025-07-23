@@ -1279,6 +1279,51 @@ def move_task_to_section(task_id, section_id, task_logger=None, task_content=Non
     return success
 
 
+def add_task_comment(task_id, comment, task_logger=None, dry_run=False):
+    """
+    Add a comment to a Todoist task using the REST API.
+    
+    Args:
+        task_id: Todoist task ID
+        comment: Comment text to add
+        task_logger: Logger for task operations
+        dry_run: If True, only simulate adding the comment
+        
+    Returns:
+        bool: True if comment was added successfully, False otherwise
+    """
+    if not task_id or not comment:
+        return False
+    
+    if dry_run:
+        if task_logger:
+            task_logger.info(f"COMMENT_DRY_RUN: Would add comment to task {task_id} | Comment: {comment[:100]}...")
+        return True
+    
+    try:
+        url = f"{TODOIST_API}/comments"
+        payload = {
+            "task_id": task_id,
+            "content": comment
+        }
+        
+        response = requests.post(url, headers=HEADERS, json=payload, timeout=30)
+        
+        if response.status_code == 200:
+            if task_logger:
+                task_logger.info(f"COMMENT_SUCCESS: Added comment to task {task_id} | Comment: {comment[:100]}...")
+            return True
+        else:
+            if task_logger:
+                task_logger.error(f"COMMENT_FAILED: Failed to add comment to task {task_id} | Status: {response.status_code}")
+            return False
+            
+    except Exception as e:
+        if task_logger:
+            task_logger.error(f"COMMENT_ERROR: Error adding comment to task {task_id}: {e}")
+        return False
+
+
 def log_task_action(task_logger, task_id, task_content, action, **kwargs):
     """Log task processing action with details"""
     # Truncate very long content for readability
@@ -2153,7 +2198,62 @@ def clear_today_section(project_id, section_id, config, task_logger=None, dry_ru
     return cleared_count
 
 
-def move_tasks_to_today_section(ranked_tasks, project_id, section_id, task_logger=None, dry_run=False, bulk_mode=False):
+def format_reranker_comment(ranked_task, ranking_mode=None):
+    """
+    Format a human-readable comment explaining why a task was selected for Today.
+    
+    Args:
+        ranked_task: Ranked task object with GPT explanation data
+        ranking_mode: Current ranking mode for context
+        
+    Returns:
+        str: Formatted comment text
+    """
+    gpt_explanation = ranked_task.get('gpt_explanation', '')
+    gpt_confidence = ranked_task.get('gpt_confidence', 0.0)
+    ranking_source = ranked_task.get('ranking_source', 'gpt_rerank')
+    recommendation = ranked_task.get('recommendation', 'standard')
+    urgency_indicators = ranked_task.get('urgency_indicators', [])
+    mode_alignment = ranked_task.get('mode_alignment', '')
+    final_score = ranked_task.get('final_score', 0.0)
+    
+    # Start with the main explanation
+    comment_lines = [
+        f"🤖 **Selected for Today** - {gpt_explanation}"
+    ]
+    
+    # Add context information
+    context_parts = []
+    if ranking_mode:
+        context_parts.append(f"Mode: {ranking_mode}")
+    if gpt_confidence > 0:
+        context_parts.append(f"Confidence: {gpt_confidence:.2f}")
+    if final_score > 0:
+        context_parts.append(f"Score: {final_score:.2f}")
+    if ranking_source and ranking_source != 'unknown':
+        context_parts.append(f"Source: {ranking_source}")
+    
+    if context_parts:
+        comment_lines.append(f"📊 {' | '.join(context_parts)}")
+    
+    # Add urgency indicators if available
+    if urgency_indicators:
+        urgency_text = ', '.join(urgency_indicators[:3])
+        comment_lines.append(f"⚠️ Urgency: {urgency_text}")
+    
+    # Add mode alignment if available and meaningful
+    if mode_alignment and mode_alignment not in ('unknown', ''):
+        comment_lines.append(f"🎯 Alignment: {mode_alignment}")
+    
+    # Add recommendation context
+    if recommendation != 'standard':
+        rec_emoji = {"prioritize": "🔥", "defer": "⏳"}.get(recommendation, "📋")
+        comment_lines.append(f"{rec_emoji} Recommendation: {recommendation}")
+    
+    return '\n'.join(comment_lines)
+
+
+def move_tasks_to_today_section(ranked_tasks, project_id, section_id, task_logger=None, dry_run=False, bulk_mode=False, add_comments=True, ranking_mode=None):
     """
     Move ranked tasks to Today section.
     
@@ -2164,6 +2264,8 @@ def move_tasks_to_today_section(ranked_tasks, project_id, section_id, task_logge
         task_logger: Logger for task operations
         dry_run: If True, only simulate task movement
         bulk_mode: Enable bulk processing rate limiting
+        add_comments: If True, add explanation comments to tasks (default: True)
+        ranking_mode: Current ranking mode for comment context
         
     Returns:
         int: Number of tasks successfully moved
@@ -2191,6 +2293,13 @@ def move_tasks_to_today_section(ranked_tasks, project_id, section_id, task_logge
         if dry_run:
             if task_logger:
                 task_logger.info(f"TODAY_MOVE_DRY_RUN: Would move task {task_id} to Today section | Content: {task_content}")
+            
+            # Show comment that would be added in dry run
+            if add_comments and 'gpt_explanation' in ranked_task:
+                comment_text = format_reranker_comment(ranked_task, ranking_mode)
+                if task_logger:
+                    task_logger.info(f"COMMENT_DRY_RUN: Would add comment to task {task_id} | Comment: {comment_text[:100]}...")
+            
             moved_count += 1
         else:
             # Move task to Today section
@@ -2199,6 +2308,12 @@ def move_tasks_to_today_section(ranked_tasks, project_id, section_id, task_logge
                 moved_count += 1
                 if task_logger:
                     task_logger.info(f"TODAY_MOVE_SUCCESS: Moved task {task_id} to Today section | Content: {task_content}")
+                
+                # Add explanation comment if enabled and GPT explanation is available
+                if add_comments and 'gpt_explanation' in ranked_task:
+                    comment_text = format_reranker_comment(ranked_task, ranking_mode)
+                    add_task_comment(task_id, comment_text, task_logger, dry_run=False)
+                    
             else:
                 if task_logger:
                     task_logger.error(f"TODAY_MOVE_FAILED: Failed to move task {task_id} to Today section")
@@ -2236,6 +2351,7 @@ def main(test_mode=False):
     parser.add_argument("--limit", type=int, default=3, help="Number of tasks to select for today (default: 3)")
     parser.add_argument("--refresh-today", action="store_true", help="Clear and regenerate today's task list")
     parser.add_argument("--refresh-today-dates", action="store_true", help="Update due dates to today for all tasks in Today section")
+    parser.add_argument("--no-comment-reasons", action="store_true", help="Disable posting reranker explanations as task comments (default: comments enabled)")
     
     args, _ = parser.parse_known_args()
     
@@ -2688,9 +2804,11 @@ def main(test_mode=False):
                                             log_info("🧹 Today section was already empty")
                                 
                                     # Move tasks to Today section
+                                    add_comments = not args.no_comment_reasons and (args.gpt_enhanced_ranking or args.gpt_rerank)
                                     moved_count = move_tasks_to_today_section(
                                         ranked_tasks, project_id, today_section_id, 
-                                        task_logger, args.dry_run, args.bulk_mode
+                                        task_logger, args.dry_run, args.bulk_mode,
+                                        add_comments, ranking_mode
                                     )
                                     
                                     # Apply today markers (due date + optional label)
