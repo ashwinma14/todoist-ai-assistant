@@ -805,16 +805,31 @@ Please respond with one or two relevant labels from the available labels list.""
             if today_section_id and task_section_id == today_section_id:
                 continue
                 
+            # Skip tasks that only have excluded labels (e.g., only #link)
+            # These are passive reference items, not actionable tasks for daily focus
+            task_labels = set(task.get('labels', []))
+            excluded_labels = {'link'}  # Labels that alone trigger exclusion from ranking
+            
+            if task_labels and task_labels.issubset(excluded_labels):
+                if self.logger:
+                    self.logger.info(f"RANK_FILTER_EXCLUDED: Task {task.get('id', 'unknown')} excluded (only has excluded labels: {task_labels})")
+                continue
+            
+            # Future: Support for link-only tasks in special modes like 'research'
+            # For now, exclusion applies globally across all modes
+                
             rankable_tasks.append(task)
         
         if self.logger and filtering_config.get('log_candidates', True):
             completed_count = len([t for t in tasks if t.get('checked', False) or t.get('completed', False)])
             today_count = len([t for t in tasks if t.get('section_id') == today_section_id]) if today_section_id else 0
-            self.logger.info(f"RANK_FILTER: {len(rankable_tasks)} rankable tasks from {len(tasks)} total (excluded: {completed_count} completed, {today_count} in Today)")
+            excluded_labels = {'link'}
+            excluded_count = len([t for t in tasks if set(t.get('labels', [])) and set(t.get('labels', [])).issubset(excluded_labels)])
+            self.logger.info(f"RANK_FILTER: {len(rankable_tasks)} rankable tasks from {len(tasks)} total (excluded: {completed_count} completed, {today_count} in Today, {excluded_count} link-only)")
         
         if not rankable_tasks:
             if self.logger:
-                self.logger.info("RANK_NO_CANDIDATES: No rankable tasks found (all completed or in Today section)")
+                self.logger.info("RANK_NO_CANDIDATES: No rankable tasks found (all completed, in Today section, or excluded)")
             return []
         
         # Score all tasks
