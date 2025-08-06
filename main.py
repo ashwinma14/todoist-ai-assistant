@@ -2332,6 +2332,7 @@ def main(test_mode=False):
     parser = argparse.ArgumentParser()
     parser.add_argument("--project", type=str, help="Comma-separated list of project names to process")
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose output")
+    parser.add_argument("--debug-labels", action="store_true", help="Debug mode: Show all labels and their mappings")
     parser.add_argument("--dry-run", action="store_true", help="Preview changes without modifying any tasks")
     parser.add_argument("--full-scan", action="store_true", help="Process all tasks, ignoring last run timestamp")
     parser.add_argument("--ignore-last-run", action="store_true", help="Bypass last run timestamp check (useful for cloud environments)")
@@ -2354,6 +2355,39 @@ def main(test_mode=False):
     parser.add_argument("--no-comment-reasons", action="store_true", help="Disable posting reranker explanations as task comments (default: comments enabled)")
     
     args, _ = parser.parse_known_args()
+    
+    # Handle debug-labels mode immediately
+    if args.debug_labels:
+        log_info("🏷️ Fetching label mappings...")
+        try:
+            response = requests.get(f"{TODOIST_API}/labels", headers=HEADERS)
+            response.raise_for_status()
+            labels = response.json()
+            
+            log_info(f"\n📋 Found {len(labels)} labels:")
+            for label in labels:
+                print(f"  • {label['name']:20} (ID: {label['id']})")
+            
+            # Also show sample tasks with their labels
+            log_info("\n📝 Sample tasks with labels:")
+            tasks_response = requests.get(f"{TODOIST_API}/tasks", headers=HEADERS, params={'limit': 10})
+            tasks_response.raise_for_status()
+            tasks = tasks_response.json()
+            
+            for task in tasks[:5]:
+                if task.get('labels'):
+                    label_names = [next((l['name'] for l in labels if l['id'] == lid), f"Unknown({lid})") 
+                                  for lid in task['labels']]
+                    task_content = task['content'][:50]
+                    if len(task['content']) > 50:
+                        task_content += "..."
+                    print(f"  • {task_content:50} → {label_names}")
+            
+            log_info("\n✅ Debug labels complete")
+            return
+        except Exception as e:
+            log_error(f"Failed to fetch labels: {e}")
+            return
     
     # Load unified configuration (CLI flags → env vars → task_sense_config → rules.json fallback)
     rules, gpt_fallback, tasksense_config = load_unified_config()
@@ -2687,6 +2721,18 @@ def main(test_mode=False):
                     log_info(f"🎯 Generating today's task list (mode: {ranking_mode}, limit: {ranking_limit})")
                     task_logger.info(f"RANKING_START: Mode={ranking_mode}, Limit={ranking_limit}, Tasks={len(tasks_to_process)}")
                     
+                    # Fetch label mappings for proper filtering
+                    label_map = {}
+                    try:
+                        response = requests.get(f"{TODOIST_API}/labels", headers=HEADERS)
+                        response.raise_for_status()
+                        labels = response.json()
+                        label_map = {label['id']: label['name'] for label in labels}
+                        task_logger.info(f"LABEL_MAP: Loaded {len(label_map)} labels for filtering")
+                    except Exception as e:
+                        task_logger.error(f"LABEL_MAP_ERROR: Could not load labels: {e}")
+                        log_warning(f"⚠️  Could not fetch label mappings: {e}")
+                    
                     # Run ranking on all available tasks (with GPT enhancement if requested)
                     if args.gpt_enhanced_ranking or args.gpt_rerank:
                         if args.gpt_rerank:
@@ -2695,9 +2741,9 @@ def main(test_mode=False):
                         else:
                             log_info(f"🤖 Using GPT-enhanced ranking with explanations")
                             task_logger.info(f"RANKING_MODE: GPT-enhanced ranking enabled")
-                        ranked_tasks = task_sense.rank_with_gpt_explanations(tasks_to_process, mode=ranking_mode, limit=ranking_limit)
+                        ranked_tasks = task_sense.rank_with_gpt_explanations(tasks_to_process, mode=ranking_mode, limit=ranking_limit, label_map=label_map)
                     else:
-                        ranked_tasks = task_sense.rank(tasks_to_process, mode=ranking_mode, limit=ranking_limit)
+                        ranked_tasks = task_sense.rank(tasks_to_process, mode=ranking_mode, limit=ranking_limit, label_map=label_map)
                     
                     if ranked_tasks:
                         if args.dry_run:

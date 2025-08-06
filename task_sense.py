@@ -742,7 +742,7 @@ Please respond with one or two relevant labels from the available labels list.""
             }
         }
     
-    def rank(self, tasks: List[Dict[str, Any]], mode: Optional[str] = None, limit: int = 3, config_override: Optional[Dict] = None) -> List[Dict[str, Any]]:
+    def rank(self, tasks: List[Dict[str, Any]], mode: Optional[str] = None, limit: int = 3, config_override: Optional[Dict] = None, label_map: Optional[Dict[str, str]] = None) -> List[Dict[str, Any]]:
         """
         Rank tasks for daily focus selection using priority-based scoring.
         
@@ -751,6 +751,7 @@ Please respond with one or two relevant labels from the available labels list.""
             mode: Override mode (work, personal, weekend, evening, auto)
             limit: Maximum tasks to return (default: 3)
             config_override: Override default ranking config
+            label_map: Optional mapping of label IDs to names
             
         Returns:
             List of ranked tasks with scores and explanations:
@@ -807,25 +808,66 @@ Please respond with one or two relevant labels from the available labels list.""
                 
             # Skip tasks that only have excluded labels (e.g., only #link)
             # These are passive reference items, not actionable tasks for daily focus
-            task_labels = set(task.get('labels', []))
-            excluded_labels = {'link'}  # Labels that alone trigger exclusion from ranking
+            task_label_ids = task.get('labels', [])
             
-            if task_labels and task_labels.issubset(excluded_labels):
+            # Convert label IDs to names if label_map is provided
+            if label_map:
+                task_label_names = {label_map.get(lid, lid) for lid in task_label_ids}
+            else:
+                # Fallback: assume labels are already names (backward compatibility)
+                task_label_names = set(task_label_ids)
+            
+            # Debug logging to understand what labels tasks have
+            if self.logger:
+                task_content = task.get('content', '')[:50]
+                self.logger.info(f"RANK_LABELS_DEBUG: Task '{task_content}' labels: IDs={task_label_ids}, Names={task_label_names}")
+            
+            # 1. Exclude tasks that ONLY have the 'link' label
+            if task_label_names == {'link'}:
                 if self.logger:
-                    self.logger.info(f"RANK_FILTER_EXCLUDED: Task {task.get('id', 'unknown')} excluded (only has excluded labels: {task_labels})")
+                    self.logger.info(f"RANK_FILTER_EXCLUDED: Task '{task.get('content', '')[:50]}' has only 'link' label")
                 continue
             
-            # Future: Support for link-only tasks in special modes like 'research'
-            # For now, exclusion applies globally across all modes
+            # 2. Define mode-specific labels
+            mode_labels = {
+                'work': {'work'},
+                'personal': {'personal'},
+            }.get(mode, {'work', 'personal'})
+            
+            # 3. Exclude tasks that have 'link' but no mode-specific labels
+            has_mode_label = any(label in mode_labels for label in task_label_names)
+            if 'link' in task_label_names and not has_mode_label:
+                if self.logger:
+                    self.logger.info(f"RANK_FILTER_EXCLUDED: Task '{task.get('content', '')[:50]}' has 'link' but no mode labels")
+                continue
                 
             rankable_tasks.append(task)
         
         if self.logger and filtering_config.get('log_candidates', True):
             completed_count = len([t for t in tasks if t.get('checked', False) or t.get('completed', False)])
             today_count = len([t for t in tasks if t.get('section_id') == today_section_id]) if today_section_id else 0
-            excluded_labels = {'link'}
-            excluded_count = len([t for t in tasks if set(t.get('labels', [])) and set(t.get('labels', [])).issubset(excluded_labels)])
-            self.logger.info(f"RANK_FILTER: {len(rankable_tasks)} rankable tasks from {len(tasks)} total (excluded: {completed_count} completed, {today_count} in Today, {excluded_count} link-only)")
+            
+            # Count excluded tasks using the same logic as filtering
+            mode_labels = {
+                'work': {'work'},
+                'personal': {'personal'},
+            }.get(mode, {'work', 'personal'})
+            
+            excluded_count = 0
+            for t in tasks:
+                t_label_ids = t.get('labels', [])
+                if t_label_ids:
+                    if label_map:
+                        t_label_names = {label_map.get(lid, lid) for lid in t_label_ids}
+                    else:
+                        t_label_names = set(t_label_ids)
+                    # Count tasks excluded by link-only filtering
+                    if t_label_names == {'link'}:
+                        excluded_count += 1
+                    elif 'link' in t_label_names and not any(label in mode_labels for label in t_label_names):
+                        excluded_count += 1
+            
+            self.logger.info(f"RANK_FILTER: {len(rankable_tasks)} rankable tasks from {len(tasks)} total (excluded: {completed_count} completed, {today_count} in Today, {excluded_count} link-only or link-without-mode)")
         
         if not rankable_tasks:
             if self.logger:
@@ -877,7 +919,7 @@ Please respond with one or two relevant labels from the available labels list.""
         
         return ranked_tasks
     
-    def rank_with_gpt_explanations(self, tasks: List[Dict[str, Any]], mode: Optional[str] = None, limit: int = 3, config_override: Optional[Dict] = None) -> List[Dict[str, Any]]:
+    def rank_with_gpt_explanations(self, tasks: List[Dict[str, Any]], mode: Optional[str] = None, limit: int = 3, config_override: Optional[Dict] = None, label_map: Optional[Dict[str, str]] = None) -> List[Dict[str, Any]]:
         """
         Rank tasks with GPT-enhanced explanations and reranking.
         
@@ -886,6 +928,7 @@ Please respond with one or two relevant labels from the available labels list.""
             mode: Override mode (work, personal, weekend, evening, auto)
             limit: Maximum tasks to return (default: 3)
             config_override: Override default ranking config
+            label_map: Optional mapping of label IDs to names
             
         Returns:
             List of ranked tasks with GPT explanations and potential reranking
@@ -899,12 +942,12 @@ Please respond with one or two relevant labels from the available labels list.""
             if self.logger:
                 self.logger.info("GPT_RANK_DISABLED: GPT reranking is disabled in configuration")
             # Fall back to base ranking
-            return self.rank(tasks, mode, limit, config_override)
+            return self.rank(tasks, mode, limit, config_override, label_map)
         
         # First, get the base ranking with more candidates for reranking
         candidate_limit = gpt_config.get('candidate_limit', 10)
         base_candidates = max(limit * 2, candidate_limit)
-        base_ranking = self.rank(tasks, mode, base_candidates, config_override)
+        base_ranking = self.rank(tasks, mode, base_candidates, config_override, label_map)
         
         if not base_ranking:
             if self.logger:
